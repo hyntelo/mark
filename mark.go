@@ -278,6 +278,16 @@ func run(ctx context.Context, config Config) error {
 		return err
 	}
 
+	// When the config path doesn't match anything as a glob but points at an
+	// existing file on disk, use it literally. This covers filenames with
+	// glob metacharacters (brackets, braces, etc.) that are common in
+	// markdown vault titles like `[WIP] Notes.md` or `[Proposal] Draft.md`.
+	if len(files) == 0 {
+		if info, statErr := os.Stat(config.Files); statErr == nil && !info.IsDir() {
+			files = []string{config.Files}
+		}
+	}
+
 	if len(files) == 0 {
 		msg := "no files matched"
 		if config.CI {
