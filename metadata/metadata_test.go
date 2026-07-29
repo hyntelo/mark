@@ -641,3 +641,42 @@ func TestExtractMetaAncestryPreservesFileOrder(t *testing.T) {
 		assert.Equal(t, []string{"API"}, meta.Folders)
 	})
 }
+
+func TestExtractMetaSkipsObsidianFrontMatterBeforeHeaders(t *testing.T) {
+	t.Run("headers after front matter are found", func(t *testing.T) {
+		markdown := `---
+title: Obsidian Title
+tags:
+  - docs
+---
+<!-- Space: DOCS -->
+<!-- Parent: Development -->
+<!-- Folder: Spikes -->
+<!-- Title: Example -->
+
+# Content
+`
+
+		meta, body, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, meta)
+		assert.Equal(t, "DOCS", meta.Space)
+		assert.Equal(t, "Example", meta.Title)
+		assert.Equal(t, []Ancestor{
+			{Type: AncestorPage, Title: "Development"},
+			{Type: AncestorFolder, Title: "Spikes"},
+		}, meta.Ancestry)
+		assert.NotContains(t, string(body), "Obsidian Title")
+	})
+
+	t.Run("thematic break is not treated as front matter", func(t *testing.T) {
+		markdown := `---
+# Not front matter, just a rule above a heading
+`
+
+		meta, body, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.Nil(t, meta)
+		assert.Equal(t, markdown, string(body))
+	})
+}

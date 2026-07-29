@@ -371,8 +371,38 @@ func stripFrontMatter(data []byte) ([]byte, error) {
 	}
 }
 
+// skipLeadingFrontMatter drops an Obsidian-style `---\n...\n---\n` block from
+// the head of the input. Vaults carry one on every file even when front matter
+// is not the metadata source, and Goldmark parses it as ordinary markdown,
+// which puts a non-HTML node first and ends the Mark header scan before it can
+// reach the `<!-- Header: Value -->` comments underneath. A block with no
+// closing fence is left untouched: that is a thematic break, not front matter.
+func skipLeadingFrontMatter(data []byte) []byte {
+	if !bytes.HasPrefix(data, []byte("---\n")) {
+		return data
+	}
+
+	if idx := bytes.Index(data[4:], []byte("\n---\n")); idx >= 0 {
+		return data[4+idx+len("\n---\n"):]
+	}
+	if bytes.HasSuffix(data, []byte("\n---")) {
+		// Front matter terminated at EOF without a trailing newline.
+		return data[:0]
+	}
+
+	return data
+}
+
 func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFilename bool, filename string, parents []string, titleAppendGeneratedHash bool, defaultContentAppearance string, frontMatterEnabled bool) (*Meta, []byte, error) {
 	var meta *Meta
+
+	// Kept so a document that turns out to carry no Mark metadata is returned
+	// to the caller byte-for-byte, front matter included.
+	original := data
+	if !frontMatterEnabled {
+		data = skipLeadingFrontMatter(data)
+	}
+
 	body := data
 
 	markdown := goldmark.New()
@@ -718,7 +748,7 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 	}
 
 	if meta == nil {
-		return nil, data, nil
+		return nil, original, nil
 	}
 
 	// YAML front matter is decoded from a map, so the order in which Parent
