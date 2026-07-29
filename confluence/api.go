@@ -1676,6 +1676,72 @@ func (api *API) FindFolder(spaceKey, title, underAncestorID string) (*FolderInfo
 	return api.GetFolderByID(item.ID)
 }
 
+// FindPageUnderParent searches for a page by title restricted to the direct
+// children of parentID. Confluence has no v2 "list children by title" call, so
+// this goes through CQL; results can lag the index right after a create, hence
+// callers must treat a nil result as "not found yet", not as "does not exist"
+// (see resolvePageBySpaceWideAndValidate).
+func (api *API) FindPageUnderParent(spaceKey, title, parentID string) (*PageInfo, error) {
+	result := struct {
+		Results []struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Title string `json:"title"`
+		} `json:"results"`
+	}{}
+
+	escapedTitle := strings.ReplaceAll(title, `\`, `\\`)
+	escapedTitle = strings.ReplaceAll(escapedTitle, `"`, `\"`)
+	escapedKey := strings.ReplaceAll(spaceKey, `"`, `\"`)
+	cql := fmt.Sprintf(
+		`type=page AND title="%s" AND space="%s" AND parent="%s"`,
+		escapedTitle, escapedKey, parentID,
+	)
+
+	payload := map[string]string{
+		"cql":    cql,
+		"limit":  "1",
+		"expand": "ancestors",
+	}
+
+	request, err := api.rest.Res("content/search", &result).Get(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for page %q under parent %q: %w", title, parentID, err)
+	}
+	if request.Raw.StatusCode != http.StatusOK {
+		return nil, newErrorStatusNotOK(request)
+	}
+	if len(result.Results) == 0 {
+		return nil, nil
+	}
+
+	return api.GetPageByID(result.Results[0].ID)
+}
+
+// GetPageParentInfo returns the parentId and parentType of a page from the v2
+// API. Unlike CQL this reflects writes immediately, so it is the authority
+// when a parent-scoped search result needs verifying.
+func (api *API) GetPageParentInfo(pageID string) (string, string, error) {
+	var result struct {
+		ID         string `json:"id"`
+		ParentID   string `json:"parentId"`
+		ParentType string `json:"parentType"`
+	}
+
+	request, err := api.restV2.Res("pages/"+pageID, &result).Get()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get parent info for page %q: %w", pageID, err)
+	}
+	if request.Raw.StatusCode == http.StatusNotFound {
+		return "", "", nil
+	}
+	if request.Raw.StatusCode != http.StatusOK {
+		return "", "", newErrorStatusNotOK(request)
+	}
+
+	return result.ParentID, result.ParentType, nil
+}
+
 func (api *API) GetFolderByID(folderID string) (*FolderInfo, error) {
 	request, err := api.v2().Res(
 		"folders/"+folderID, &FolderInfo{},
