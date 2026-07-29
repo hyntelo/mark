@@ -14,6 +14,11 @@ import (
 
 func orderedAPI(t *testing.T) (*confluence.API, *confluencetest.Server) {
 	t.Helper()
+
+	// The folder cache is package state that outlives one test, and its key
+	// holds ids the fake hands out afresh for each server.
+	ResetFolderCache()
+
 	server := confluencetest.New(t)
 
 	return confluence.NewAPI(server.URL, "user", "token", false), server
@@ -156,6 +161,31 @@ func TestEnsureOrderedAncestryDryRunRecordsNothing(t *testing.T) {
 
 	assert.Empty(t, tracker.recorded)
 	assert.Equal(t, 0, server.CountRequests("POST", "/rest/api/content"))
+	assert.Equal(t, 0, server.CountRequests("POST", "/api/v2/folders"))
+}
+
+// TestEnsureOrderedAncestryAnchorsALeadingFolderToTheHomepage: Confluence Cloud
+// parents a space's top-level folders to the homepage, not to the space itself,
+// so a Folder header with no Parent above it has to resolve there. Searching
+// the space instead matches a folder of the same title anywhere in it.
+func TestEnsureOrderedAncestryAnchorsALeadingFolderToTheHomepage(t *testing.T) {
+	api, server := orderedAPI(t)
+	server.AddSpace("DOCS")
+	home := server.AddPage("DOCS", "DOCS Home", "page", "")
+	server.SetHomepage("DOCS", home.ID)
+
+	elsewhere := server.AddPage("DOCS", "Elsewhere", "page", home.ID)
+	decoy := server.AddFolder("DOCS", "Guides", elsewhere.ID, "page")
+	wanted := server.AddFolder("DOCS", "Guides", home.ID, "page")
+
+	parent, err := EnsureOrderedAncestry(false, api, "DOCS", []metadata.Ancestor{
+		{Type: metadata.AncestorFolder, Title: "Guides"},
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, parent)
+
+	assert.Equal(t, wanted.ID, parent.ID)
+	assert.NotEqual(t, decoy.ID, parent.ID)
 	assert.Equal(t, 0, server.CountRequests("POST", "/api/v2/folders"))
 }
 

@@ -670,6 +670,11 @@ func findOrCreatePageEntry(
 	tracker AncestryTracker,
 	key string,
 ) (*OrderedParent, error) {
+	if parent != nil && isDryRunID(parent.ID) {
+		log.Info().Msgf("dry-run: would create page %q under %s %q", title, parent.Type, parent.Title)
+		return &OrderedParent{ID: dryRunPageID, Title: title, Type: "page"}, nil
+	}
+
 	if parent == nil {
 		// Top-level: search space-wide. Legacy "Parent: <homepage>" patterns
 		// keep working because the homepage is reachable by title.
@@ -876,6 +881,12 @@ func findOrCreateFolderEntry(
 	tracker AncestryTracker,
 	key string,
 ) (*OrderedParent, error) {
+	if parent != nil && isDryRunID(parent.ID) {
+		log.Info().Msgf("dry-run: would create folder %q under %s %q", title, parent.Type, parent.Title)
+
+		return &OrderedParent{ID: dryRunFolderID, Title: title, Type: "folder"}, nil
+	}
+
 	underID := ""
 	// A page ancestor doubles as the MARK_PARENTS anchor for the folders
 	// below it, which lets resolveFolder relocate a folder that an earlier
@@ -886,11 +897,32 @@ func findOrCreateFolderEntry(
 		if parent.Type == "page" {
 			anchorPageID = &parent.ID
 		}
+	} else {
+		// A Folder header with no page above it still needs an anchor:
+		// Confluence Cloud parents a space's "top-level" folders to the space
+		// homepage, not to the space itself. Anchoring there keeps the
+		// direct-child validation meaningful instead of matching a folder of
+		// the same title anywhere in the space.
+		home, err := api.FindHomePage(space)
+		if err != nil {
+			return nil, fmt.Errorf("can't obtain home page from space %q: %w", space, err)
+		}
+
+		underID = home.ID
+		anchorPageID = &home.ID
 	}
 
 	folder, err := resolveFolderEntry(api, dryRun, space, underID, title, anchorPageID)
 	if err != nil {
 		return nil, err
+	}
+	if folder == nil && parent == nil {
+		// A hierarchy built by an earlier version, which created a top-level
+		// folder at the space root rather than under the homepage.
+		folder, err = resolveFolderEntry(api, dryRun, space, "", title, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if folder != nil {
 		log.Debug().Msgf("ancestor folder %q resolved under %q: %s", title, underID, folder.ID)
@@ -911,14 +943,14 @@ func findOrCreateFolderEntry(
 		return &OrderedParent{ID: dryRunFolderID, Title: title, Type: "folder"}, nil
 	}
 
-	parentType := ""
-	var parentID *string
+	// underID is the homepage when this is a leading Folder header, so a new
+	// top-level folder lands beside the ones already there.
+	parentType := "page"
 	if parent != nil {
-		parentID = &parent.ID
 		parentType = parent.Type
 	}
 
-	created, cerr := api.CreateFolder(spaceID, title, parentID, parentType)
+	created, cerr := api.CreateFolder(spaceID, title, &underID, parentType)
 	if cerr == nil {
 		cacheFolder(space, underID, title, created.ID)
 		return &OrderedParent{ID: created.ID, Title: created.Title, Type: "folder"}, nil
