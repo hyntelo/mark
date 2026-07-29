@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/kovetskiy/mark/v16/confluence"
+	"github.com/kovetskiy/mark/v16/metadata"
 	"github.com/rs/zerolog/log"
 )
 
@@ -546,6 +547,474 @@ func EnsureAncestry(
 // parents that is not the homepage, a chain that cannot be resolved -- is a
 // genuine impasse.
 var ErrAncestryMismatch = errors.New("page is not under the declared parents")
+
+// The ids a dry run gives an ancestor it only pretended to create.
+const (
+	dryRunPageID   = "dry-run-page-id"
+	dryRunFolderID = "dry-run-folder-id"
+)
+
+// isDryRunID reports whether an ancestor was only simulated. Everything below
+// a simulated ancestor must be simulated too: its ID does not exist, and
+// feeding it to a parent-scoped search yields a CQL parse error rather than an
+// empty result.
+func isDryRunID(id string) bool {
+	return id == dryRunPageID || id == dryRunFolderID
+}
+
+// OrderedParent represents the resolved final parent for the target page.
+// When the parent is a folder, the caller must use CreatePageWithFolderParent
+// instead of the page-parented CreatePage. Type is "page" or "folder".
+type OrderedParent struct {
+	ID    string
+	Title string
+	Type  string
+}
+
+// EnsureOrderedAncestry walks the metadata.Ancestry list top-down. For each
+// entry it locates the corresponding page or folder under the previously
+// resolved parent (or under the space root for the first entry); missing
+// entries are created in place. Returns the resolved final parent that the
+// caller will use to create or update the target page.
+//
+// Unlike EnsureMixedAncestry, which hard-codes "anchor pages first, then all
+// folders", this supports hierarchies that interleave the two kinds, e.g.
+// page > folder > page > folder > target.
+func EnsureOrderedAncestry(
+	dryRun bool,
+	api *confluence.API,
+	space string,
+	ancestry []metadata.Ancestor,
+	tracker AncestryTracker,
+) (*OrderedParent, error) {
+	if len(ancestry) == 0 {
+		return nil, nil
+	}
+
+	// Reject unknown entry types before touching the network so a malformed
+	// header fails immediately instead of half-way through creating a tree.
+	for i, entry := range ancestry {
+		if entry.Type != metadata.AncestorPage && entry.Type != metadata.AncestorFolder {
+			return nil, fmt.Errorf("ancestor[%d] %q: unknown type %q", i, entry.Title, entry.Type)
+		}
+	}
+
+	spaceID, err := api.GetSpaceID(space)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get space ID for %q: %w", space, err)
+	}
+
+	var parent *OrderedParent
+
+	for i, entry := range ancestry {
+		switch entry.Type {
+		case metadata.AncestorPage:
+			page, err := findOrCreatePageEntry(dryRun, api, space, parent, entry.Title, tracker, orderedPathKey(ancestry, i))
+			if err != nil {
+				return nil, fmt.Errorf("ancestor[%d] page %q: %w", i, entry.Title, err)
+			}
+			parent = page
+
+		case metadata.AncestorFolder:
+			folder, err := findOrCreateFolderEntry(dryRun, api, space, spaceID, parent, entry.Title, tracker, orderedPathKey(ancestry, i))
+			if err != nil {
+				return nil, fmt.Errorf("ancestor[%d] folder %q: %w", i, entry.Title, err)
+			}
+			parent = folder
+
+		default:
+			return nil, fmt.Errorf("ancestor[%d] %q: unknown type %q", i, entry.Title, entry.Type)
+		}
+
+		// Nothing is recorded for an ancestor a dry run only pretended to
+		// create: the id names nothing, and the next real run would adopt it as
+		// the page this chain resolves to.
+		if tracker != nil && parent != nil && !isDryRunID(parent.ID) {
+			if err := recordOrdered(tracker, space, orderedPathKey(ancestry, i), entry.Type, parent.ID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return parent, nil
+}
+
+// orderedPathKey names an ancestor by the chain of entries leading to it.
+//
+// The kind is part of each segment because the same titles in the same order
+// may name a page in one document and a folder in another, and those are
+// different objects in the same space.
+func orderedPathKey(ancestry []metadata.Ancestor, upto int) string {
+	segments := make([]string, 0, upto+1)
+	for _, entry := range ancestry[:upto+1] {
+		segments = append(segments, entry.Type+":"+entry.Title)
+	}
+
+	return strings.Join(segments, "\x00")
+}
+
+func recordOrdered(tracker AncestryTracker, space, key, kind, id string) error {
+	if kind == metadata.AncestorFolder {
+		return tracker.RecordFolder(space, key, id)
+	}
+
+	return tracker.RecordParent(space, key, id)
+}
+
+func findOrCreatePageEntry(
+	dryRun bool,
+	api *confluence.API,
+	space string,
+	parent *OrderedParent,
+	title string,
+	tracker AncestryTracker,
+	key string,
+) (*OrderedParent, error) {
+	if parent == nil {
+		// Top-level: search space-wide. Legacy "Parent: <homepage>" patterns
+		// keep working because the homepage is reachable by title.
+		page, err := api.FindPage(space, title, "page")
+		if err != nil {
+			return nil, err
+		}
+		if page != nil {
+			log.Debug().Msgf("ancestor page %q resolved at space root: %s", title, page.ID)
+			return &OrderedParent{ID: page.ID, Title: page.Title, Type: "page"}, nil
+		}
+		renamed, err := recordedPage(api, tracker, space, key, title)
+		if err != nil {
+			return nil, err
+		}
+		if renamed != nil {
+			return renamed, nil
+		}
+		if dryRun {
+			log.Info().Msgf("dry-run: would create top-level page %q", title)
+			return &OrderedParent{ID: dryRunPageID, Title: title, Type: "page"}, nil
+		}
+		root, err := api.FindRootPage(space)
+		if err != nil {
+			return nil, fmt.Errorf("can't find root page for space %q: %w", space, err)
+		}
+		created, err := api.CreatePage(space, "page", root, title, "")
+		if err != nil {
+			return nil, fmt.Errorf("create page %q under space root: %w", title, err)
+		}
+		return &OrderedParent{ID: created.ID, Title: created.Title, Type: "page"}, nil
+	}
+
+	// 1. Parent-scoped CQL search.
+	page, err := api.FindPageUnderParent(space, title, parent.ID)
+	if err != nil {
+		return nil, err
+	}
+	if page != nil {
+		log.Debug().Msgf("ancestor page %q resolved under %s %q: %s", title, parent.Type, parent.Title, page.ID)
+		return &OrderedParent{ID: page.ID, Title: page.Title, Type: "page"}, nil
+	}
+
+	// 2. Defensive fallback: space-wide find + v2 parent validation. CQL
+	// `parent=` results lag the index, especially right after a parallel
+	// create. If the page already exists under our parent, accept it.
+	resolved, err := resolvePageBySpaceWideAndValidate(api, space, title, parent.ID)
+	if err != nil {
+		return nil, err
+	}
+	if resolved != nil {
+		return resolved, nil
+	}
+
+	renamed, err := recordedPage(api, tracker, space, key, title)
+	if err != nil {
+		return nil, err
+	}
+	if renamed != nil {
+		return renamed, nil
+	}
+
+	if dryRun {
+		log.Info().Msgf("dry-run: would create page %q under %s %q", title, parent.Type, parent.Title)
+		return &OrderedParent{ID: dryRunPageID, Title: title, Type: "page"}, nil
+	}
+
+	// 3. Create.
+	var (
+		created *confluence.PageInfo
+		cerr    error
+	)
+	switch parent.Type {
+	case "folder":
+		created, cerr = api.CreatePageWithFolderParent(space, "page", parent.ID, title, "")
+	case "page":
+		created, cerr = api.CreatePage(space, "page", &confluence.PageInfo{ID: parent.ID, Title: parent.Title, Type: "page"}, title, "")
+	default:
+		return nil, fmt.Errorf("unknown parent type %q", parent.Type)
+	}
+	if cerr == nil {
+		return &OrderedParent{ID: created.ID, Title: created.Title, Type: "page"}, nil
+	}
+
+	// 4. Create failed; if Confluence rejected because the title already
+	// exists, retry the space-wide validator. Catches the race where a
+	// concurrent push (e.g. another mark invocation pushed by a wrapper in
+	// parallel) created the same page between our search and our create.
+	if isTitleConflictError(cerr) {
+		log.Warn().Err(cerr).Msgf("create %q failed with title conflict; retrying via space-wide resolver", title)
+		retry, rerr := resolvePageBySpaceWideAndValidate(api, space, title, parent.ID)
+		if rerr != nil {
+			return nil, fmt.Errorf("create page %q under %s %q failed and recovery failed: create=%v recovery=%w", title, parent.Type, parent.Title, cerr, rerr)
+		}
+		if retry != nil {
+			return retry, nil
+		}
+	}
+
+	return nil, fmt.Errorf("create page %q under %s %q: %w", title, parent.Type, parent.Title, cerr)
+}
+
+// recordedPage returns the page a chain resolved to on an earlier run, when no
+// page carries the declared title any more.
+//
+// That is what a rename in Confluence looks like from here, and taking it for
+// absence creates an empty page under the old title and moves the real one's
+// children beneath it.
+func recordedPage(
+	api *confluence.API,
+	tracker AncestryTracker,
+	space, key, title string,
+) (*OrderedParent, error) {
+	if tracker == nil {
+		return nil, nil
+	}
+
+	id, ok, err := tracker.LookupParent(space, key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to check whether page %q was renamed: %w", title, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	page, err := api.GetPageByID(id)
+	if err != nil {
+		// Only a recorded page that is genuinely gone may be passed over.
+		// Anything else -- a 401, a 403, a 5xx that outlived every retry --
+		// read as absence turns a network blip into a duplicate ancestor.
+		if !errors.Is(err, confluence.ErrNotFound) {
+			return nil, fmt.Errorf("unable to load page %s recorded for %q: %w", id, title, err)
+		}
+
+		log.Warn().Msgf("page %q was recorded as %s, which no longer exists", title, id)
+
+		return nil, nil
+	}
+	if page == nil {
+		return nil, nil
+	}
+
+	log.Info().Msgf(
+		"page %q was renamed to %q; using it rather than creating another", title, page.Title,
+	)
+
+	return &OrderedParent{ID: page.ID, Title: page.Title, Type: "page"}, nil
+}
+
+// resolvePageBySpaceWideAndValidate looks up `title` space-wide and verifies
+// via the v2 API that the page sits directly under `expectedParentID`.
+// Returns (resolved, nil) on match, (nil, nil) if no page is found,
+// (nil, err) if the existing page sits under a different parent.
+func resolvePageBySpaceWideAndValidate(
+	api *confluence.API,
+	space, title, expectedParentID string,
+) (*OrderedParent, error) {
+	spaceWide, err := api.FindPage(space, title, "page")
+	if err != nil {
+		return nil, err
+	}
+	if spaceWide == nil {
+		return nil, nil
+	}
+
+	parentID, _, perr := api.GetPageParentInfo(spaceWide.ID)
+	if perr != nil {
+		log.Debug().Err(perr).Msgf("could not verify parent of %q via v2 API; treating as not-yet-resolved", title)
+		return nil, nil
+	}
+	if parentID == expectedParentID {
+		log.Warn().Msgf(
+			"page %q resolved via space-wide search and validated as direct child of expected parent (id=%s); CQL parent-scoped search may have returned stale results",
+			title, expectedParentID,
+		)
+		return &OrderedParent{ID: spaceWide.ID, Title: spaceWide.Title, Type: "page"}, nil
+	}
+
+	return nil, fmt.Errorf(
+		"page %q exists in space %q under a different parent (parentId=%q; expected %q). "+
+			"Either rename the new page or move the existing page under the expected parent in Confluence.",
+		title, space, parentID, expectedParentID,
+	)
+}
+
+func isTitleConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, "A page already exists") ||
+		strings.Contains(msg, "page with this title already exists") ||
+		strings.Contains(msg, "folder exists with the same title")
+}
+
+func findOrCreateFolderEntry(
+	dryRun bool,
+	api *confluence.API,
+	space, spaceID string,
+	parent *OrderedParent,
+	title string,
+	tracker AncestryTracker,
+	key string,
+) (*OrderedParent, error) {
+	underID := ""
+	// A page ancestor doubles as the MARK_PARENTS anchor for the folders
+	// below it, which lets resolveFolder relocate a folder that an earlier
+	// sync left at the space root.
+	var anchorPageID *string
+	if parent != nil {
+		underID = parent.ID
+		if parent.Type == "page" {
+			anchorPageID = &parent.ID
+		}
+	}
+
+	folder, err := resolveFolderEntry(api, dryRun, space, underID, title, anchorPageID)
+	if err != nil {
+		return nil, err
+	}
+	if folder != nil {
+		log.Debug().Msgf("ancestor folder %q resolved under %q: %s", title, underID, folder.ID)
+		return folder, nil
+	}
+
+	renamed, err := recordedFolder(api, tracker, space, key, title)
+	if err != nil {
+		return nil, err
+	}
+	if renamed != nil {
+		cacheFolder(space, underID, title, renamed.ID)
+		return renamed, nil
+	}
+
+	if dryRun {
+		log.Info().Msgf("dry-run: would create folder %q under %q", title, underID)
+		return &OrderedParent{ID: dryRunFolderID, Title: title, Type: "folder"}, nil
+	}
+
+	parentType := ""
+	var parentID *string
+	if parent != nil {
+		parentID = &parent.ID
+		parentType = parent.Type
+	}
+
+	created, cerr := api.CreateFolder(spaceID, title, parentID, parentType)
+	if cerr == nil {
+		cacheFolder(space, underID, title, created.ID)
+		return &OrderedParent{ID: created.ID, Title: created.Title, Type: "folder"}, nil
+	}
+
+	// Another file in the same run, or a parallel mark invocation, may have
+	// created this folder between our search and our create.
+	if isTitleConflictError(cerr) {
+		log.Warn().Err(cerr).Msgf("create folder %q failed with title conflict; re-resolving", title)
+		retry, rerr := resolveFolderEntry(api, dryRun, space, underID, title, anchorPageID)
+		if rerr != nil {
+			return nil, fmt.Errorf("create folder %q under %q failed and recovery failed: create=%v recovery=%w", title, underID, cerr, rerr)
+		}
+		if retry != nil {
+			return retry, nil
+		}
+
+		return nil, fmt.Errorf(
+			"folder %q exists in space %q but not under the expected parent %q. "+
+				"Either rename the new folder or move the existing folder under the expected parent in Confluence.",
+			title, space, underID,
+		)
+	}
+
+	return nil, fmt.Errorf("create folder %q under %q: %w", title, underID, cerr)
+}
+
+// resolveFolderEntry resolves a single folder ancestor, preferring the
+// process-wide cache populated by earlier files in the same run.
+func resolveFolderEntry(
+	api *confluence.API,
+	dryRun bool,
+	space, underID, title string,
+	anchorPageID *string,
+) (*OrderedParent, error) {
+	var (
+		folder *confluence.FolderInfo
+		err    error
+	)
+
+	if id, ok := cachedFolderID(space, underID, title); ok {
+		folder, err = api.GetFolderByID(id)
+	} else {
+		folder, err = resolveFolder(api, dryRun, space, title, underID, anchorPageID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error finding folder with title %q: %w", title, err)
+	}
+	if folder == nil {
+		return nil, nil
+	}
+
+	cacheFolder(space, underID, title, folder.ID)
+
+	return &OrderedParent{ID: folder.ID, Title: folder.Title, Type: "folder"}, nil
+}
+
+// recordedFolder is recordedPage for a folder.
+//
+// GetFolderByID answers a folder that is gone with (nil, nil), so an error here
+// is a failure to read rather than an absence -- most often a scoped token
+// without folder read -- and taking it for absence splits the hierarchy this
+// lookup exists to hold together.
+func recordedFolder(
+	api *confluence.API,
+	tracker AncestryTracker,
+	space, key, title string,
+) (*OrderedParent, error) {
+	if tracker == nil {
+		return nil, nil
+	}
+
+	id, ok, err := tracker.LookupFolder(space, key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to check whether folder %q was renamed: %w", title, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	folder, err := api.GetFolderByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("unable to check whether folder %q was renamed: %w", title, err)
+	}
+	if folder == nil {
+		log.Warn().Msgf("folder %q was recorded as %s, which no longer exists", title, id)
+
+		return nil, nil
+	}
+
+	log.Info().Msgf(
+		"folder %q was renamed to %q; using it rather than creating another", title, folder.Title,
+	)
+
+	return &OrderedParent{ID: folder.ID, Title: folder.Title, Type: "folder"}, nil
+}
 
 func ValidateAncestry(
 	api *confluence.API,

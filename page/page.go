@@ -71,31 +71,48 @@ func ResolvePage(
 	var parent *confluence.PageInfo
 
 	if len(meta.Folders) > 0 {
-
-		// Build the complete path for logging
-		fullPath := append(meta.Folders, meta.Parents...)
-		fullPath = append(fullPath, meta.Title)
+		// Mixed hierarchies are resolved from the ordered meta.Ancestry list,
+		// which preserves the order the Parent/Folder headers appear in the
+		// file, so pages and folders may interleave freely.
+		ancestryPath := make([]string, 0, len(meta.Ancestry)+1)
+		for _, ancestor := range meta.Ancestry {
+			ancestryPath = append(ancestryPath, fmt.Sprintf("%s:%s", ancestor.Type, ancestor.Title))
+		}
 
 		log.Debug().
 			Msgf(
-				"resolving mixed hierarchy path: %s",
-				strings.Join(fullPath, ` > `),
+				"resolving mixed hierarchy path: %s > %s",
+				strings.Join(ancestryPath, ` > `),
+				meta.Title,
 			)
 
-		parent, err = EnsureMixedAncestry(
+		resolved, err := EnsureOrderedAncestry(
 			dryRun,
 			api,
-			tracker,
 			meta.Space,
-			meta.Folders,
-			meta.Parents,
+			meta.Ancestry,
+			tracker,
 		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("can't create mixed folder/page ancestry tree: folders=%s, pages=%s: %w",
-				strings.Join(meta.Folders, ` > `),
-				strings.Join(meta.Parents, ` > `),
+			return nil, nil, fmt.Errorf("can't create ordered folder/page ancestry tree [%s]: %w",
+				strings.Join(ancestryPath, ` > `),
 				err,
 			)
+		}
+
+		// Translate OrderedParent into the *confluence.PageInfo shape callers
+		// expect. When the resolved parent is a folder, encode the
+		// "folder-parent" sentinel so ProcessFile branches into
+		// CreatePageWithFolderParent on creation.
+		if resolved != nil {
+			parent = &confluence.PageInfo{
+				ID:    resolved.ID,
+				Title: resolved.Title,
+				Type:  resolved.Type,
+			}
+			if resolved.Type == "folder" {
+				parent.Type = "folder-parent"
+			}
 		}
 	} else {
 		// Traditional page-only ancestry
@@ -174,9 +191,10 @@ func ResolvePage(
 	var displayPath []string
 
 	if len(meta.Folders) > 0 {
-		// MARK_PARENTS anchor, then folder chain, then leaf page
-		displayPath = append(displayPath, meta.Parents...)
-		displayPath = append(displayPath, meta.Folders...)
+		// Pages and folders in the order they were declared in the file
+		for _, ancestor := range meta.Ancestry {
+			displayPath = append(displayPath, ancestor.Title)
+		}
 	} else {
 		// Traditional page hierarchy
 		if parent != nil {

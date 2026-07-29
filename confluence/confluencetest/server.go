@@ -588,6 +588,9 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request, path string) {
 	case path == "/content/archive":
 		s.archiveContent(w, r)
 
+	case path == "/content/search":
+		s.searchPage(w, r)
+
 	case strings.HasPrefix(path, "/content/"):
 		rest := strings.TrimPrefix(path, "/content/")
 		id, sub, _ := strings.Cut(rest, "/")
@@ -1533,6 +1536,38 @@ func cqlValue(cql, field string) string {
 		return rest[:end]
 	}
 	return rest
+}
+
+// searchPage serves the CQL page search, which a parent-scoped lookup uses to
+// ask for a page by title directly under one parent.
+//
+// Confluence answers that with the pages it has indexed, which lags recent
+// writes; the fake answers from what it stores, so a test that wants the stale
+// case has to arrange it rather than expect it.
+func (s *Server) searchPage(w http.ResponseWriter, r *http.Request) {
+	cql := r.URL.Query().Get("cql")
+	title := cqlValue(cql, "title")
+	spaceKey := cqlValue(cql, "space")
+	parent := cqlValue(cql, "parent")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	results := []map[string]any{}
+	for _, p := range s.pages {
+		if p.Title != title || (spaceKey != "" && p.SpaceKey != spaceKey) {
+			continue
+		}
+		if parent != "" && p.ParentID != parent {
+			continue
+		}
+		results = append(results, map[string]any{
+			"id": p.ID, "type": "page", "title": p.Title,
+		})
+		break
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 func (s *Server) searchFolder(w http.ResponseWriter, r *http.Request) {
