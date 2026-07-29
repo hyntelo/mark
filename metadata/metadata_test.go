@@ -169,8 +169,16 @@ image-align: center
 	meta, body, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", true)
 	assert.NoError(t, err)
 	assert.Equal(t, &Meta{
-		Parents:           []string{"Parent 1", "Parent 2"},
-		Folders:           []string{"Folder 1", "Folder 2"},
+		Parents: []string{"Parent 1", "Parent 2"},
+		Folders: []string{"Folder 1", "Folder 2"},
+		// Front matter is a map, so declaration order is not observable;
+		// Ancestry falls back to anchor pages first, then folders.
+		Ancestry: []Ancestor{
+			{Type: AncestorPage, Title: "Parent 1"},
+			{Type: AncestorPage, Title: "Parent 2"},
+			{Type: AncestorFolder, Title: "Folder 1"},
+			{Type: AncestorFolder, Title: "Folder 2"},
+		},
 		Space:             "DOCS",
 		Type:              "page",
 		Title:             "Test Page",
@@ -337,8 +345,11 @@ func TestExtractMeta_FolderHeaders(t *testing.T) {
 
 # Content`,
 			expected: &Meta{
-				Space:             "DOCS",
-				Folders:           []string{"API Documentation"},
+				Space:   "DOCS",
+				Folders: []string{"API Documentation"},
+				Ancestry: []Ancestor{
+					{Type: AncestorFolder, Title: "API Documentation"},
+				},
 				Title:             "Authentication",
 				Type:              "page",
 				ContentAppearance: "full-width",
@@ -354,8 +365,13 @@ func TestExtractMeta_FolderHeaders(t *testing.T) {
 
 # Content`,
 			expected: &Meta{
-				Space:             "DOCS",
-				Folders:           []string{"Backend", "Services", "Authentication"},
+				Space:   "DOCS",
+				Folders: []string{"Backend", "Services", "Authentication"},
+				Ancestry: []Ancestor{
+					{Type: AncestorFolder, Title: "Backend"},
+					{Type: AncestorFolder, Title: "Services"},
+					{Type: AncestorFolder, Title: "Authentication"},
+				},
 				Title:             "Password Reset",
 				Type:              "page",
 				ContentAppearance: "full-width",
@@ -371,9 +387,16 @@ func TestExtractMeta_FolderHeaders(t *testing.T) {
 
 # Content`,
 			expected: &Meta{
-				Space:             "DOCS",
-				Folders:           []string{"Backend", "Services"},
-				Parents:           []string{"User Management"},
+				Space:   "DOCS",
+				Folders: []string{"Backend", "Services"},
+				Parents: []string{"User Management"},
+				// Declaration order is preserved: the Parent header follows
+				// both Folder headers in the source.
+				Ancestry: []Ancestor{
+					{Type: AncestorFolder, Title: "Backend"},
+					{Type: AncestorFolder, Title: "Services"},
+					{Type: AncestorPage, Title: "User Management"},
+				},
 				Title:             "Password Reset",
 				Type:              "page",
 				ContentAppearance: "full-width",
@@ -387,8 +410,11 @@ func TestExtractMeta_FolderHeaders(t *testing.T) {
 
 # Content`,
 			expected: &Meta{
-				Space:             "DOCS",
-				Parents:           []string{"User Management"},
+				Space:   "DOCS",
+				Parents: []string{"User Management"},
+				Ancestry: []Ancestor{
+					{Type: AncestorPage, Title: "User Management"},
+				},
 				Title:             "Password Reset",
 				Type:              "page",
 				ContentAppearance: "full-width",
@@ -403,8 +429,12 @@ func TestExtractMeta_FolderHeaders(t *testing.T) {
 
 # Content`,
 			expected: &Meta{
-				Space:             "DOCS",
-				Folders:           []string{"API Documentation & Examples", "User's Guide"},
+				Space:   "DOCS",
+				Folders: []string{"API Documentation & Examples", "User's Guide"},
+				Ancestry: []Ancestor{
+					{Type: AncestorFolder, Title: "API Documentation & Examples"},
+					{Type: AncestorFolder, Title: "User's Guide"},
+				},
 				Title:             "Getting Started",
 				Type:              "page",
 				ContentAppearance: "full-width",
@@ -550,4 +580,64 @@ func TestExtractMetaYAMLFrontMatterOrderRejectsNonNumbers(t *testing.T) {
 			assert.Contains(t, err.Error(), "order")
 		})
 	}
+}
+
+func TestExtractMetaAncestryPreservesFileOrder(t *testing.T) {
+	t.Run("page then folders", func(t *testing.T) {
+		markdown := `<!-- Space: DOCS -->
+<!-- Parent: Development -->
+<!-- Folder: Spikes -->
+<!-- Folder: Proposals -->
+<!-- Title: Example -->
+
+# Content`
+
+		meta, _, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, meta)
+		assert.Equal(t, []Ancestor{
+			{Type: AncestorPage, Title: "Development"},
+			{Type: AncestorFolder, Title: "Spikes"},
+			{Type: AncestorFolder, Title: "Proposals"},
+		}, meta.Ancestry)
+		assert.Equal(t, []string{"Development"}, meta.Parents)
+		assert.Equal(t, []string{"Spikes", "Proposals"}, meta.Folders)
+	})
+
+	t.Run("interleaved page-folder-page", func(t *testing.T) {
+		markdown := `<!-- Space: DOCS -->
+<!-- Parent: A -->
+<!-- Folder: B -->
+<!-- Parent: C -->
+<!-- Folder: D -->
+<!-- Title: T -->
+
+# T`
+
+		meta, _, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.Equal(t, []Ancestor{
+			{Type: AncestorPage, Title: "A"},
+			{Type: AncestorFolder, Title: "B"},
+			{Type: AncestorPage, Title: "C"},
+			{Type: AncestorFolder, Title: "D"},
+		}, meta.Ancestry)
+	})
+
+	t.Run("CLI parents prepended as pages", func(t *testing.T) {
+		markdown := `<!-- Space: DOCS -->
+<!-- Folder: API -->
+<!-- Title: T -->
+
+# T`
+
+		meta, _, err := ExtractMeta([]byte(markdown), "", false, false, "", []string{"CliRoot"}, false, "", false)
+		assert.NoError(t, err)
+		assert.Equal(t, []Ancestor{
+			{Type: AncestorPage, Title: "CliRoot"},
+			{Type: AncestorFolder, Title: "API"},
+		}, meta.Ancestry)
+		assert.Equal(t, []string{"CliRoot"}, meta.Parents)
+		assert.Equal(t, []string{"API"}, meta.Folders)
+	})
 }

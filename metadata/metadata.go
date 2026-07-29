@@ -156,9 +156,25 @@ func equalRunes(a, b []rune) bool {
 	return true
 }
 
+const (
+	AncestorPage   = "page"
+	AncestorFolder = "folder"
+)
+
+// Ancestor is a single entry in Meta.Ancestry, recording the order in which
+// Parent/Folder header comments appear in the markdown source. The ordered
+// list drives the EnsureOrderedAncestry walker so arbitrary mixed Confluence
+// Cloud hierarchies (e.g. page > folder > page > folder > target) resolve
+// correctly. Type is one of AncestorPage or AncestorFolder.
+type Ancestor struct {
+	Type  string
+	Title string
+}
+
 type Meta struct {
 	Parents           []string
 	Folders           []string
+	Ancestry          []Ancestor
 	Space             string
 	Type              string
 	Title             string
@@ -549,9 +565,11 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 				switch header {
 				case HeaderParent:
 					meta.Parents = append(meta.Parents, value)
+					meta.Ancestry = append(meta.Ancestry, Ancestor{Type: AncestorPage, Title: value})
 
 				case HeaderFolder:
 					meta.Folders = append(meta.Folders, value)
+					meta.Ancestry = append(meta.Ancestry, Ancestor{Type: AncestorFolder, Title: value})
 
 				case HeaderSpace:
 					meta.Space = strings.TrimSpace(value)
@@ -703,9 +721,28 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 		return nil, data, nil
 	}
 
+	// YAML front matter is decoded from a map, so the order in which Parent
+	// and Folder entries were written is not observable there. Fall back to
+	// the legacy anchor-pages-then-folders order so front matter documents
+	// resolve exactly as they did before Ancestry existed.
+	if len(meta.Ancestry) == 0 {
+		for _, parent := range meta.Parents {
+			meta.Ancestry = append(meta.Ancestry, Ancestor{Type: AncestorPage, Title: parent})
+		}
+		for _, folder := range meta.Folders {
+			meta.Ancestry = append(meta.Ancestry, Ancestor{Type: AncestorFolder, Title: folder})
+		}
+	}
+
 	// Prepend parent pages that are defined via the cli flag
 	if len(parents) > 0 && parents[0] != "" {
 		meta.Parents = append(parents, meta.Parents...)
+
+		cliAncestry := make([]Ancestor, 0, len(parents))
+		for _, parent := range parents {
+			cliAncestry = append(cliAncestry, Ancestor{Type: AncestorPage, Title: parent})
+		}
+		meta.Ancestry = append(cliAncestry, meta.Ancestry...)
 	}
 
 	// deterministically generate a hash from the page's parents, space, and title
