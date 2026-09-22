@@ -4,6 +4,11 @@
 [![All Contributors](https://img.shields.io/badge/all_contributors-44-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
+> **Hyntelo workspace fork.** This is a fork of [`kovetskiy/mark`](https://github.com/kovetskiy/mark)
+> with bugfixes and feature work specific to a large multi-space Confluence vault. The
+> default branch is `master`; the GitHub upstream is wired as the `upstream`
+> remote. Notable divergences from upstream are documented in [CLAUDE.md](./CLAUDE.md).
+
 Mark — a tool for syncing your markdown documentation with Atlassian Confluence
 pages.
 
