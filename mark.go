@@ -89,6 +89,7 @@ type Config struct {
 	MermaidEngine    string
 	MermaidScale     float64
 	MermaidOutput    string
+	MermaidConfig    string
 	MermaidBundle    bool
 	D2Output         string
 	D2Scale          float64
@@ -175,6 +176,7 @@ func run(ctx context.Context, config Config) error {
 	// lazily and shared: a diagram already drawn is not drawn again to match.
 	// Its size limits go the same way, and depend on what is being published.
 	mermaid.UseRasterLimits(config.MermaidOutput)
+	mermaid.UseConfigFile(config.MermaidConfig)
 
 	if err := mermaid.UseEngine(config.MermaidEngine); err != nil {
 		return err

@@ -242,6 +242,14 @@ var Flags = []cli.Flag{
 		Usage:   "image a mermaid diagram is published as: png (rasterised, and scaled by --mermaid-scale) or svg (vector and sharp at any zoom, where the instance displays an SVG attachment).",
 		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_MERMAID_OUTPUT"), altsrctoml.TOML("mermaid-output", altsrc.NewStringPtrSourcer(&filename))),
 	},
+	&cli.StringFlag{
+		Name: "mermaid-config",
+		Usage: "path to a mermaid configuration file, in JSON, handed to the renderer. " +
+			"Only --mermaid-engine=merman reads it: merman ignores the themeVariables a diagram " +
+			"sets in its own %%{init}%% directive, and a configuration file is the way to apply them.",
+		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_MERMAID_CONFIG"),
+			altsrctoml.TOML("mermaid-config", altsrc.NewStringPtrSourcer(&filename))),
+	},
 	&cli.BoolFlag{
 		Name:    "mermaid-bundle",
 		Value:   false,

@@ -58,6 +58,26 @@ var (
 // and the engine's arguments are fixed when it is built rather than per render.
 var rasterLimitsOff bool
 
+// mermanConfigFile is a mermaid configuration file handed to merman.
+//
+// It exists because merman does not read themeVariables out of a diagram's own
+// %%{init}%% directive. It reads the rest of that directive -- a gitGraph's
+// branch names, label rotation and ordering all survive -- but the colours are
+// dropped, with no warning and a diagram that renders perfectly well in the
+// wrong palette. Chrome honoured them, because Chrome ran mermaid.js itself.
+//
+// Through a configuration file the same variables do apply, so this is the one
+// way to get them back. The cost is that a file is one setting for the whole
+// run: two diagrams that each want their own palette cannot both have it, and
+// the second one silently gets the first one's.
+var mermanConfigFile string
+
+// UseConfigFile points merman at a mermaid configuration file, or at nothing
+// when the path is empty. Called before UseEngine, like the settings above.
+func UseConfigFile(path string) {
+	mermanConfigFile = path
+}
+
 // UseRasterLimits says whether merman may cap the size of a rendered diagram.
 // Called with the run's mermaid output format, before UseEngine: a run that
 // publishes SVG must leave the limits in place.
@@ -242,6 +262,10 @@ func startMerman() (mermaid.Renderer, error) {
 	var opts []mermaid.MermanOption
 	if rasterLimitsOff {
 		opts = append(opts, mermaid.WithMermanArgs("--raster-unbounded"))
+	}
+
+	if mermanConfigFile != "" {
+		opts = append(opts, mermaid.WithMermanConfigFile(mermanConfigFile))
 	}
 
 	engine, err := mermaid.NewMermanEngine(context.Background(), opts...)
