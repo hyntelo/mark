@@ -136,6 +136,7 @@ func RunMark(ctx context.Context, cmd *cli.Command) error {
 		MermaidOutput:    cmd.String("mermaid-output"),
 		MermaidConfig:    cmd.String("mermaid-config"),
 		MermaidBundle:    cmd.Bool("mermaid-bundle"),
+		D2Engine:         cmd.String("d2-engine"),
 		D2Output:         cmd.String("d2-output"),
 		D2BundleRemote:   cmd.Bool("d2-bundle-remote"),
 		D2Scale:          cmd.Float("d2-scale"),

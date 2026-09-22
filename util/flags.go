@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/kovetskiy/mark/v16/d2"
 	"github.com/kovetskiy/mark/v16/mermaid"
 
 	altsrc "github.com/urfave/cli-altsrc/v3"
@@ -346,6 +347,13 @@ var Flags = []cli.Flag{
 		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_PRESERVE_COMMENTS"), altsrctoml.TOML("preserve-comments", altsrc.NewStringPtrSourcer(&filename))),
 	},
 	&cli.StringFlag{
+		Name:  "d2-engine",
+		Value: "chrome",
+		Usage: "what a d2 diagram's png is rasterised by: chrome (the default, a headless browser screenshotting the drawing) or resvg (a native rasteriser that needs no browser and must be installed separately). The drawing itself is d2's either way.",
+		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_D2_ENGINE"),
+			altsrctoml.TOML("d2-engine", altsrc.NewStringPtrSourcer(&filename))),
+	},
+	&cli.StringFlag{
 		Name:    "d2-output",
 		Value:   "png",
 		Usage:   "image a d2 diagram is published as: png (rasterised) or svg (vector and sharp at any zoom, with whatever the diagram references inlined into it, where the instance displays an SVG attachment).",
@@ -594,6 +602,19 @@ func CheckFlags(context context.Context, command *cli.Command) (context.Context,
 			return context, fmt.Errorf(
 				"invalid value for --mermaid-engine: %q (expected: %s or %s)",
 				mermaidEngine, mermaid.EngineChrome, mermaid.EngineMerman,
+			)
+		}
+	}
+
+	d2Engine := command.String("d2-engine")
+	if d2Engine != "" || command.IsSet("d2-engine") {
+		switch d2Engine {
+		case d2.EngineChrome, d2.EngineResvg:
+			// ok
+		default:
+			return context, fmt.Errorf(
+				"invalid value for --d2-engine: %q (expected: %s or %s)",
+				d2Engine, d2.EngineChrome, d2.EngineResvg,
 			)
 		}
 	}

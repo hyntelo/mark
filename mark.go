@@ -91,6 +91,7 @@ type Config struct {
 	MermaidOutput    string
 	MermaidConfig    string
 	MermaidBundle    bool
+	D2Engine         string
 	D2Output         string
 	D2Scale          float64
 	D2BundleRemote   bool
@@ -179,6 +180,10 @@ func run(ctx context.Context, config Config) error {
 	mermaid.UseConfigFile(config.MermaidConfig)
 
 	if err := mermaid.UseEngine(config.MermaidEngine); err != nil {
+		return err
+	}
+
+	if err := d2.UseEngine(config.D2Engine); err != nil {
 		return err
 	}
 

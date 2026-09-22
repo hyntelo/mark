@@ -40,6 +40,45 @@ var ErrUnsafeDiagram = errors.New("diagram is not safe to publish")
 
 var renderTimeout = 120 * time.Second
 
+// The engines a diagram's PNG can be drawn by. d2 compiles, lays out and draws
+// the SVG itself either way: what is chosen here is only what turns that
+// drawing into a picture.
+const (
+	// EngineChrome screenshots the drawing in a headless browser, which is what
+	// mark has always done, and what reads the fonts d2 embeds in the SVG
+	// without any help.
+	EngineChrome = "chrome"
+
+	// EngineResvg shells out to the resvg CLI, which rasterises in about 5 MB
+	// and needs no browser. It cannot read an embedded @font-face, so the
+	// drawing is rewritten first -- see substituteEmbeddedFonts -- and the
+	// fonts d2 measured the text with have to be installed.
+	EngineResvg = "resvg"
+)
+
+// d2Engine is what the PNG is rasterised by for the rest of the run. Chrome by
+// default, which is the renderer that needs nothing installed beside a browser.
+var d2Engine = EngineChrome
+
+// UseEngine chooses what a diagram's PNG is rasterised by, for the rest of the
+// run. Set once, before anything is published.
+func UseEngine(kind string) error {
+	switch kind {
+	case "", EngineChrome:
+		d2Engine = EngineChrome
+
+	case EngineResvg:
+		d2Engine = EngineResvg
+
+	default:
+		return fmt.Errorf(
+			"unknown d2 engine %q: expected %q or %q", kind, EngineChrome, EngineResvg,
+		)
+	}
+
+	return nil
+}
+
 // diagramPad is the margin d2 draws around a diagram. It is named because the
 // size of the picture depends on it: the drawing is the bounding box of what
 // was laid out, with this much added on every side.
@@ -80,12 +119,15 @@ func renderSVG(ctx context.Context, d2Diagram []byte) (out []byte, width, height
 		return nil, 0, 0, err
 	}
 
-	// Before anything is done with the drawing. The PNG is rasterised by resvg,
-	// which draws and does not execute, so that side no longer runs what the
-	// diagram says -- but the SVG is uploaded whole, and served to whoever opens
-	// the page. Checked in one place for both, because which output a run
-	// produces is a flag, and a check that only guards one of them is a check
-	// somebody turns off by accident.
+	// Before anything is done with the drawing, because what is done with it
+	// may be dangerous. The PNG is screenshotted by navigating a browser to the
+	// drawing as a document, so anything the drawing runs runs on the machine
+	// publishing -- in a browser started with --no-sandbox; with --d2-engine=resvg
+	// it is drawn rather than executed, and that is not the case. The SVG is
+	// uploaded whole either way, and served to whoever opens the page. Checked
+	// in one place for all of it, because which output a run produces is a flag,
+	// and a check that only guards one of them is a check somebody turns off by
+	// accident.
 	if err := checkDrawingIsSafe(out); err != nil {
 		return nil, 0, 0, err
 	}
@@ -110,9 +152,26 @@ func ProcessD2(title string, d2Diagram []byte, scale float64) (attachment.Attach
 
 	log.Debug().Msgf("Rendering: %q", title)
 
-	pngBytes, err := rasterise(ctx, substituteEmbeddedFonts(out), scale)
-	if err != nil {
-		return attachment.Attachment{}, err
+	var pngBytes []byte
+
+	if d2Engine == EngineChrome {
+		// d2 nests the diagram in an outer svg, so the inner one is what to
+		// screenshot: the outer one carries the padding. The browser reads the
+		// fonts d2 embedded, and measures the picture itself, so neither the
+		// substitution nor d2's own bounding box is used here.
+		var chromeWidth, chromeHeight int64
+
+		pngBytes, chromeWidth, chromeHeight, err = chrome.PNGFromSVG(out, `document.querySelector("svg > svg")`, scale)
+		if err != nil {
+			return attachment.Attachment{}, err
+		}
+
+		width, height = int(chromeWidth), int(chromeHeight)
+	} else {
+		pngBytes, err = rasterise(ctx, substituteEmbeddedFonts(out), scale)
+		if err != nil {
+			return attachment.Attachment{}, err
+		}
 	}
 
 	scaleAsBytes := make([]byte, 8)
@@ -330,9 +389,9 @@ var executable = map[string]bool{
 //
 // The SVG is uploaded to Confluence for other people's browsers to open, so a
 // diagram in a pull request could wait there to be opened by a colleague. The
-// PNG is rasterised rather than screenshotted now, so it no longer runs
-// anything on the machine publishing -- the check stays over both because that
-// is a property of the rasteriser, not a promise the diagram made.
+// PNG runs it outright where it is screenshotted in a browser, which is the
+// default. The check stays over both outputs whatever --d2-engine says, because
+// not executing is a property of one rasteriser, not a promise the diagram made.
 //
 // What a diagram has to say for itself is mostly drawn rather than passed
 // through -- but not all of it: a d2 link is an address, and it goes into the
@@ -426,11 +485,9 @@ func (bundleLogger) Error(message string) { log.Error().Msg(message) }
 
 // Cleanup shuts down the shared browser.
 //
-// This package no longer starts one -- it rasterises with resvg -- but mermaid
-// and the math feature still can, and mark.go calls this alongside theirs. It
-// stays a call into chrome/ rather than becoming a no-op so that a caller which
-// only knows it renders diagrams does not have to know which package owns the
-// browser.
+// Started here for --d2-engine=chrome, and by mermaid and the math feature for
+// their own renders -- one browser is shared by all of them, so this is a call
+// into chrome/ rather than anything this package owns.
 func Cleanup() {
 	chrome.Cleanup()
 }
@@ -443,9 +500,8 @@ func Cleanup() {
 // large way to do -- it is half the weight of the image, and it has to be run
 // with its sandbox disabled to work in a container at all.
 //
-// resvg does the same job in about 5 MB. mermaid still needs a real renderer,
-// which is merman's job (--mermaid-engine=merman); this only replaces the
-// screenshot.
+// resvg does the same job in about 5 MB, for a run that asked for it with
+// --d2-engine=resvg. It has to be installed: mark shells out to it by name.
 const resvgBinary = "resvg"
 
 // fontDirEnv names the directory resvg draws with, to the exclusion of the
