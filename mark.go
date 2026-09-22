@@ -97,6 +97,7 @@ type Config struct {
 	MathScale        float64
 	Features         []string
 	ImageAlign       string
+	Layout           string
 	AttachReferenced bool
 	IncludePath      string
 
@@ -1059,8 +1060,12 @@ func processFile(file string, api *confluence.API, config Config, std *stdlib.Li
 	var labels []string
 	var contentAppearance, emoji string
 
+	layout = config.Layout
+
 	if meta != nil {
-		layout = meta.Layout
+		if meta.Layout != "" {
+			layout = meta.Layout
+		}
 		sidebar = meta.Sidebar
 		labels = meta.Labels
 		contentAppearance = meta.ContentAppearance

@@ -384,6 +384,12 @@ var Flags = []cli.Flag{
 		Usage:   "set image alignment (left, center, right). Can be overridden per-file via the Image-Align header.",
 		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_IMAGE_ALIGN"), altsrctoml.TOML("image-align", altsrc.NewStringPtrSourcer(&filename))),
 	},
+	&cli.StringFlag{
+		Name:    "layout",
+		Value:   "",
+		Usage:   "default page layout. Possible values: article. Can be overridden per-file via the Layout header.",
+		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_LAYOUT"), altsrctoml.TOML("layout", altsrc.NewStringPtrSourcer(&filename))),
+	},
 }
 
 // CheckFlags validates combinations and values of global flags.
@@ -423,6 +429,33 @@ func CheckConfigFile(command *cli.Command) error {
 	var parsed map[string]any
 	if err := toml.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("unable to parse configuration file %q: %w", path, err)
+	}
+
+	// A key nothing reads is a misspelling of one that would have been read,
+	// and the lazy reading above hides it just as completely as a syntax error
+	// does: the setting simply never arrives. The names come from Flags rather
+	// than from a list kept beside them, which could not stay in step with a
+	// flag added later.
+	known := map[string]bool{}
+	for _, flag := range Flags {
+		for _, name := range flag.Names() {
+			known[name] = true
+		}
+	}
+
+	var unknown []string
+	for key := range parsed {
+		if !known[key] {
+			unknown = append(unknown, key)
+		}
+	}
+
+	if len(unknown) > 0 {
+		slices.Sort(unknown)
+		return fmt.Errorf(
+			"configuration file %q sets %s, which mark does not read",
+			path, strings.Join(unknown, ", "),
+		)
 	}
 
 	return nil

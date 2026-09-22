@@ -291,3 +291,37 @@ func TestImageAlignAcceptsWhatItDocuments(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckConfigFileRejectsAKeyNothingReads(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mark.toml")
+
+	// Every key a real configuration uses, plus one misspelling.
+	require.NoError(t, os.WriteFile(path, []byte(
+		"username = \"a\"\nbase-url = \"b\"\ntitle-from-h1 = true\n"+
+			"layout = \"article\"\nfeatures = [\"d2\"]\nmermaid-scaale = 3\n",
+	), 0o600))
+
+	cmd := &cli.Command{Flags: Flags}
+	require.NoError(t, cmd.Set("config", path))
+
+	err := CheckConfigFile(cmd)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mermaid-scaale")
+}
+
+func TestCheckConfigFileAcceptsEveryFlagName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mark.toml")
+
+	require.NoError(t, os.WriteFile(path, []byte(
+		"username = \"a\"\nbase-url = \"b\"\ntitle-from-h1 = true\ndrop-h1 = true\n"+
+			"layout = \"article\"\nedit-lock = true\nmermaid-scale = 3\nd2-scale = 10\n"+
+			"features = [\"d2\", \"mermaid\"]\n",
+	), 0o600))
+
+	cmd := &cli.Command{Flags: Flags}
+	require.NoError(t, cmd.Set("config", path))
+
+	assert.NoError(t, CheckConfigFile(cmd))
+}

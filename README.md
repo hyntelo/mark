@@ -1760,6 +1760,7 @@ GLOBAL OPTIONS:
    --insecure-skip-tls-verify                     skip TLS certificate verification (useful for self-signed certificates) [$MARK_INSECURE_SKIP_TLS_VERIFY]
    --attach-referenced                            upload a local file that a link points at, and link to the attachment. Without it the link is published as the path the document wrote, which means nothing once the page is on Confluence. Images are attached either way. [$MARK_ATTACH_REFERENCED]
    --image-align string                           set image alignment (left, center, right). Can be overridden per-file via the Image-Align header. [$MARK_IMAGE_ALIGN]
+   --layout string                                default page layout. Possible values: article. Can be overridden per-file via the Layout header. [$MARK_LAYOUT]
    --help, -h                                     show help
    --version, -v                                  print the version
 ```
@@ -1777,6 +1778,7 @@ base-url = "http://confluence.local"
 title-from-h1 = true
 drop-h1 = true
 image-align = "center"
+layout = "article"
 ```
 
 **NOTE**: `password-command` keeps the token out of both the configuration file and the environment.
