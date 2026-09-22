@@ -3,6 +3,7 @@
 .idea/
 /mark.test
 /profile.cov
+/dist
 .vscode
 
 # Chrome dumps core where the test that was driving it happened to be running,
