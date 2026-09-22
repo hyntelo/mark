@@ -210,6 +210,10 @@ type PageInfo struct {
 		} `json:"storage"`
 	} `json:"body"`
 
+	Space struct {
+		Key string `json:"key"`
+	} `json:"space"`
+
 	Links struct {
 		Full string `json:"webui"`
 		Base string `json:"-"` // Not from JSON; populated from response _links.base
@@ -998,7 +1002,7 @@ func (api *API) GetAttachments(pageID string) ([]AttachmentInfo, error) {
 }
 
 func (api *API) GetPageByID(pageID string) (*PageInfo, error) {
-	return api.GetPageByIDExpanded(pageID, "ancestors,version")
+	return api.GetPageByIDExpanded(pageID, "ancestors,version,space")
 }
 
 func (api *API) GetPageByIDExpanded(pageID string, expand string) (*PageInfo, error) {

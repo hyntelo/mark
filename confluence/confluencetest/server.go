@@ -450,6 +450,10 @@ func (s *Server) pageJSON(p *Page) map[string]any {
 		"body": map[string]any{
 			"storage": map[string]any{"value": p.Body},
 		},
+		// Confluence returns the space whenever it is expanded, and a caller
+		// that holds a page id from somewhere else reads it to find out which
+		// space the id landed in.
+		"space":  map[string]any{"key": p.SpaceKey},
 		"_links": map[string]any{"webui": "/display/" + p.SpaceKey + "/" + p.ID},
 	}
 }

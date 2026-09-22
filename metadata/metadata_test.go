@@ -669,6 +669,36 @@ tags:
 		assert.NotContains(t, string(body), "Obsidian Title")
 	})
 
+	t.Run("confluence_id is read out of the skipped front matter", func(t *testing.T) {
+		markdown := `---
+title: Obsidian Title
+confluence_id: 123456789
+---
+<!-- Space: DOCS -->
+<!-- Title: Renamed Page -->
+`
+
+		meta, _, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, meta)
+		assert.Equal(t, "123456789", meta.ID)
+		assert.Equal(t, "Renamed Page", meta.Title)
+	})
+
+	t.Run("no confluence_id leaves the id empty", func(t *testing.T) {
+		markdown := `---
+title: Obsidian Title
+---
+<!-- Space: DOCS -->
+<!-- Title: Example -->
+`
+
+		meta, _, err := ExtractMeta([]byte(markdown), "", false, false, "", nil, false, "", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, meta)
+		assert.Empty(t, meta.ID)
+	})
+
 	t.Run("thematic break is not treated as front matter", func(t *testing.T) {
 		markdown := `---
 # Not front matter, just a rule above a heading

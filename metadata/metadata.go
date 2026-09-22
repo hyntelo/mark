@@ -172,9 +172,14 @@ type Ancestor struct {
 }
 
 type Meta struct {
-	Parents           []string
-	Folders           []string
-	Ancestry          []Ancestor
+	Parents  []string
+	Folders  []string
+	Ancestry []Ancestor
+	// ID is the Confluence page ID the document was last published to, read
+	// from the `confluence_id` front matter key. It makes the page identity
+	// independent of the title, so a retitled document is renamed in place
+	// instead of published as a second page.
+	ID                string
 	Space             string
 	Type              string
 	Title             string
@@ -294,6 +299,19 @@ func toStringMap(val any) map[string]any {
 	}
 }
 
+// toID renders a front matter value as a Confluence content ID. YAML decodes a
+// bare `confluence_id: 12345` as an integer, a quoted one as a string.
+func toID(val any) string {
+	switch v := val.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case int, int64, uint64:
+		return fmt.Sprint(v)
+	}
+
+	return ""
+}
+
 func toString(val any) string {
 	if val == nil {
 		return ""
@@ -352,6 +370,24 @@ func warnAboutUnknownKeys(keys []string, filename string) {
 	}
 }
 
+// confluenceIDFromFrontMatter pulls `confluence_id: <id>` out of a front matter
+// block that was skipped rather than parsed: the vault case, where the metadata
+// comes from the Mark header comments and only the ID is stamped into front
+// matter. Scanning beats decoding here -- the block is arbitrary YAML that mark
+// has no schema for, and only this one key matters.
+func confluenceIDFromFrontMatter(block []byte) string {
+	for line := range strings.SplitSeq(string(block), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || normaliseFrontMatterKey(strings.TrimSpace(key)) != "confluenceid" {
+			continue
+		}
+
+		return strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+
+	return ""
+}
+
 func stripFrontMatter(data []byte) ([]byte, error) {
 	delimiter, rest, ok := bytes.Cut(data, []byte("\n"))
 	if !ok {
@@ -377,20 +413,22 @@ func stripFrontMatter(data []byte) ([]byte, error) {
 // which puts a non-HTML node first and ends the Mark header scan before it can
 // reach the `<!-- Header: Value -->` comments underneath. A block with no
 // closing fence is left untouched: that is a thematic break, not front matter.
-func skipLeadingFrontMatter(data []byte) []byte {
+// The skipped block is returned alongside the rest so the caller can still read
+// individual keys out of it.
+func skipLeadingFrontMatter(data []byte) (rest, block []byte) {
 	if !bytes.HasPrefix(data, []byte("---\n")) {
-		return data
+		return data, nil
 	}
 
 	if idx := bytes.Index(data[4:], []byte("\n---\n")); idx >= 0 {
-		return data[4+idx+len("\n---\n"):]
+		return data[4+idx+len("\n---\n"):], data[4 : 4+idx]
 	}
 	if bytes.HasSuffix(data, []byte("\n---")) {
 		// Front matter terminated at EOF without a trailing newline.
-		return data[:0]
+		return data[:0], data[4 : len(data)-len("\n---")]
 	}
 
-	return data
+	return data, nil
 }
 
 func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFilename bool, filename string, parents []string, titleAppendGeneratedHash bool, defaultContentAppearance string, frontMatterEnabled bool) (*Meta, []byte, error) {
@@ -399,8 +437,9 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 	// Kept so a document that turns out to carry no Mark metadata is returned
 	// to the caller byte-for-byte, front matter included.
 	original := data
+	var skippedFrontMatter []byte
 	if !frontMatterEnabled {
-		data = skipLeadingFrontMatter(data)
+		data, skippedFrontMatter = skipLeadingFrontMatter(data)
 	}
 
 	body := data
@@ -453,6 +492,8 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 				setContentAppearance(meta, toString(v))
 			case "imagealign":
 				meta.ImageAlign = strings.ToLower(toString(v))
+			case "confluenceid":
+				meta.ID = toID(v)
 			case "order":
 				order, ok := toInt(v)
 				if !ok {
@@ -749,6 +790,10 @@ func ExtractMeta(data []byte, spaceFromCli string, titleFromH1 bool, titleFromFi
 
 	if meta == nil {
 		return nil, original, nil
+	}
+
+	if meta.ID == "" {
+		meta.ID = confluenceIDFromFrontMatter(skippedFrontMatter)
 	}
 
 	// YAML front matter is decoded from a map, so the order in which Parent

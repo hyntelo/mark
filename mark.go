@@ -912,6 +912,15 @@ func processFile(file string, api *confluence.API, config Config, std *stdlib.Li
 			pg.Title = meta.Title
 		}
 
+		// A page matched by its recorded confluence_id arrives under whatever
+		// title Confluence holds, which is the old one when the document has
+		// been retitled. Carry the new title into the update rather than
+		// leaving the old one in place.
+		if pg.Title != meta.Title {
+			pg.Title = meta.Title
+			titleChanged = true
+		}
+
 		target = pg
 	} else {
 		pg, err := api.GetPageByID(config.PageID)

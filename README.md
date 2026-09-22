@@ -127,6 +127,24 @@ mixed in the same document to create complex hierarchies.
 > [!NOTE]
 > Folder support is currently only available on Confluence Cloud and is not supported in Confluence Server / Data Center.
 
+### Renaming pages
+
+Pages are located by title, so retitling a document would normally publish a
+second page and leave the old one behind under its old title. Record the page ID
+in front matter to make the page identity independent of the title:
+
+```markdown
+---
+confluence_id: 123456789
+---
+```
+
+Mark then resolves the page by that ID and renames it in place when the
+document's title no longer matches. The key is read even when the `frontmatter`
+feature is disabled, so documents that keep their metadata in HTML headers can
+carry it too. An ID that no longer resolves, or that points at a page in another
+space, is ignored with a warning and the title lookup is used instead.
+
 Also, optional following headers are supported:
 
 ```markdown

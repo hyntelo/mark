@@ -10,6 +10,51 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// findExistingPage locates the page a document is already published to. A
+// recorded `confluence_id` wins over the title lookup: it is the only way to
+// recognise a page whose title changed in the markdown, which would otherwise
+// be published as a second page while the old one lingers under the old title.
+//
+// An ID that is gone, or that points into another space, falls back to the
+// title lookup - publishing a duplicate is recoverable, overwriting an
+// unrelated page is not.
+//
+// Only a 404 counts as gone. Every other failure to read -- a 401, a 403, a 5xx
+// that outlived its retries -- ends the run rather than falling back, because
+// the fallback publishes a second page and the run that did it looks like it
+// worked.
+func findExistingPage(api *confluence.API, meta *metadata.Meta) (*confluence.PageInfo, error) {
+	if meta.ID != "" {
+		page, err := api.GetPageByID(meta.ID)
+		switch {
+		case errors.Is(err, confluence.ErrNotFound):
+			log.Warn().Msgf(
+				"recorded confluence_id %s for page %q no longer exists; falling back to title lookup",
+				meta.ID, meta.Title,
+			)
+		case err != nil:
+			return nil, fmt.Errorf(
+				"unable to read page %s recorded for %q: %w", meta.ID, meta.Title, err,
+			)
+		case page.Space.Key != "" && page.Space.Key != meta.Space:
+			log.Warn().Msgf(
+				"recorded confluence_id %s for page %q lives in space %q, not %q; falling back to title lookup",
+				meta.ID, meta.Title, page.Space.Key, meta.Space,
+			)
+		default:
+			if page.Title != meta.Title {
+				log.Info().Msgf(
+					"page %s will be renamed: %q -> %q",
+					page.ID, page.Title, meta.Title,
+				)
+			}
+			return page, nil
+		}
+	}
+
+	return api.FindPage(meta.Space, meta.Title, meta.Type)
+}
+
 func ResolvePage(
 	dryRun bool,
 	api *confluence.API,
@@ -22,12 +67,15 @@ func ResolvePage(
 	if len(meta.Folders) > 0 && !api.IsCloud() {
 		return nil, nil, fmt.Errorf("folder support is currently only available on Confluence Cloud")
 	}
-	page, err := api.FindPage(meta.Space, meta.Title, meta.Type)
+	page, err := findExistingPage(api, meta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error while finding page %q: %w", meta.Title, err)
 	}
 
-	if page != nil && len(meta.Folders) > 0 && len(meta.Parents) > 0 && !pageUnderParents(page, meta.Parents) {
+	// A page matched by recorded ID is authoritative: it is the page this
+	// document owns, wherever it currently sits, so it gets relocated rather
+	// than duplicated.
+	if page != nil && page.ID != meta.ID && len(meta.Folders) > 0 && len(meta.Parents) > 0 && !pageUnderParents(page, meta.Parents) {
 		log.Warn().Msgf(
 			"page %q exists outside MARK_PARENTS %q; will create or relocate under folder hierarchy",
 			meta.Title,
