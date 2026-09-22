@@ -173,6 +173,9 @@ func run(ctx context.Context, config Config) error {
 
 	// The engine is chosen before anything is published, because it is built
 	// lazily and shared: a diagram already drawn is not drawn again to match.
+	// Its size limits go the same way, and depend on what is being published.
+	mermaid.UseRasterLimits(config.MermaidOutput)
+
 	if err := mermaid.UseEngine(config.MermaidEngine); err != nil {
 		return err
 	}

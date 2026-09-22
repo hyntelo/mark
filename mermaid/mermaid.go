@@ -41,6 +41,30 @@ var (
 	mermaidMutex  sync.Mutex
 )
 
+// rasterLimitsOff asks merman not to cap the size of a rendered diagram.
+//
+// merman refuses to draw a diagram larger than 4096px on a side, and does it by
+// scaling the drawing down to fit rather than by failing: the run succeeds, the
+// PNG is valid, and the only trace is a picture with less in it than was asked
+// for. A tagging pipeline flowchart in this repository comes out 3530px wide at
+// --mermaid-scale=3, so this is not a theoretical size.
+//
+// Those limits exist for untrusted input. What mark publishes is the
+// repository's own documentation, and the size that is wanted is the one
+// --mermaid-scale asked for.
+//
+// It is off for SVG because merman rejects any raster option outright when it
+// is not rasterising ("raster options require --format png or --format jpg"),
+// and the engine's arguments are fixed when it is built rather than per render.
+var rasterLimitsOff bool
+
+// UseRasterLimits says whether merman may cap the size of a rendered diagram.
+// Called with the run's mermaid output format, before UseEngine: a run that
+// publishes SVG must leave the limits in place.
+func UseRasterLimits(output string) {
+	rasterLimitsOff = output != "svg"
+}
+
 // UseEngine chooses what diagrams are drawn by, for the rest of the run.
 //
 // Set once, before anything is published, because the engine is built lazily
@@ -215,7 +239,12 @@ func checkMermanVersion(version string) error {
 func startMerman() (mermaid.Renderer, error) {
 	log.Debug().Msg("Setting up global Mermaid renderer (merman)")
 
-	engine, err := mermaid.NewMermanEngine(context.Background())
+	var opts []mermaid.MermanOption
+	if rasterLimitsOff {
+		opts = append(opts, mermaid.WithMermanArgs("--raster-unbounded"))
+	}
+
+	engine, err := mermaid.NewMermanEngine(context.Background(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unable to start the merman render engine asked for by --mermaid-engine: %w", err,
