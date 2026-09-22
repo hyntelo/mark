@@ -95,6 +95,8 @@ COPY --from=builder /go/src/github.com/kovetskiy/mark/mark /bin/
 # just filled, and we are back to diagrams with no text.
 RUN fc-cache -f
 
+ENV MARK_MERMAID_ENGINE="merman"
+
 WORKDIR /docs
 
 ENTRYPOINT ["dumb-init", "--"]
