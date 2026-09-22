@@ -1,19 +1,23 @@
-# This image has no browser in it. Upstream's is built on chromedp/headless-shell,
-# because mermaid is drawn by running mermaid.js in a real browser and the SVG that
-# d2 produces is turned into a PNG by taking a picture of it. That is about 280 MB
-# of Chrome, plus everything it needs.
+# An image with no browser in it.
 #
-# Neither job needs a browser any more:
+# The default image (Dockerfile) is built on chromedp/headless-shell, because
+# that is what the binary draws with when it is told nothing: mermaid runs
+# mermaid.js in a real browser, and a d2 PNG is a screenshot of the SVG. That is
+# about 280 MB of Chrome, plus everything it needs.
 #
-#   * mermaid  -> merman-cli, a native reimplementation, selected at run time with
-#                 --mermaid-engine=merman (MARK_MERMAID_ENGINE). Upstream already
-#                 installs it; this image just has nothing to fall back to, so the
-#                 flag is not optional here.
-#   * d2       -> resvg. d2 compiles, lays out and renders the SVG on its own in
-#                 Go; Chrome was only the rasteriser. See d2/d2.go.
+# Here both jobs are done by a native renderer instead, selected by the ENVs at
+# the bottom of this file:
 #
-# The maths feature (--features=math) still renders through Chrome upstream, so it
-# will not work in this image. Nothing we publish uses it.
+#   * mermaid  -> merman-cli, a native reimplementation
+#                 (--mermaid-engine=merman, MARK_MERMAID_ENGINE).
+#   * d2       -> resvg (--d2-engine=resvg, MARK_D2_ENGINE). d2 compiles, lays
+#                 out and renders the SVG on its own in Go; Chrome was only the
+#                 rasteriser. See d2/d2.go.
+#
+# Neither is installed in the default image and neither is the binary's default,
+# so this file has to install them AND ask for them. The maths feature
+# (--features=math) renders through Chrome with no native path at all, so it
+# does not work here.
 
 # ---------------------------------------------------------------------------
 # Stage 1: the mark binary, and d2's fonts
@@ -51,9 +55,8 @@ ARG TARGETARCH
 RUN apt-get update \
 && apt-get upgrade -qq \
 && apt-get install --no-install-recommends -qq \
-     ca-certificates bash sed python3 dumb-init \
+     ca-certificates bash sed dumb-init \
      fonts-liberation2 fonts-dejavu-core fontconfig \
-     curl xz-utils \
 && apt-get clean \
 && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -69,6 +72,8 @@ COPY --from=builder /go/src/github.com/kovetskiy/mark/mermaid/merman-version.txt
 # would draw no mermaid at all. The Azure pool is amd64.
 RUN set -eux; \
     if [ "${TARGETARCH}" = "amd64" ]; then \
+        apt-get update; \
+        apt-get install --no-install-recommends -qq curl xz-utils; \
         MERMAN_VERSION="$(cat /etc/merman-version)"; \
         base="https://github.com/Latias94/merman/releases/download/v${MERMAN_VERSION}"; \
         archive="merman-cli-x86_64-unknown-linux-gnu.tar.xz"; \
@@ -79,13 +84,12 @@ RUN set -eux; \
         tar -xJf "${archive}"; \
         install -m 0755 merman-cli-x86_64-unknown-linux-gnu/merman-cli /usr/local/bin/merman-cli; \
         merman-cli --version; \
-        rm -rf /tmp/merman-cli-*; \
+        rm -rf /tmp/merman-cli-* /tmp/"${archive}"*; \
+        apt-get purge -y -qq curl xz-utils; \
+        apt-get autoremove -y -qq; \
+        apt-get clean; \
+        rm -rf /var/lib/apt/lists/*; \
     fi
-
-# curl and xz-utils were only needed for the download above.
-RUN apt-get purge -y -qq curl xz-utils \
-&& apt-get autoremove -y -qq \
-&& rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /d2-fonts/ /usr/share/fonts/truetype/d2/
 COPY --from=resvg-builder /usr/local/cargo/bin/resvg /usr/local/bin/resvg
@@ -95,7 +99,16 @@ COPY --from=builder /go/src/github.com/kovetskiy/mark/mark /bin/
 # just filled, and we are back to diagrams with no text.
 RUN fc-cache -f
 
+# The renderers this image carries, which are not the ones the binary would
+# choose for itself: without these it would look for a browser that is not here.
 ENV MARK_MERMAID_ENGINE="merman"
+ENV MARK_D2_ENGINE="resvg"
+
+# The fonts d2 measured its text with, installed above. Named explicitly so that
+# resvg draws with those and not with whatever else the machine has: a diagram
+# drawn in a different font is a different diagram, and the checksum is taken
+# over the source, so nothing would notice.
+ENV MARK_FONT_DIR="/usr/share/fonts/truetype/d2"
 
 WORKDIR /docs
 
