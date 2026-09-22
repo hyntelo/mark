@@ -308,3 +308,17 @@ func TestEncodeTinyLinkIDLargeIDs(t *testing.T) {
 	// Verify the result is a valid URL-safe base64-like string
 	assert.Regexp(t, `^[A-Za-z0-9_-]+$`, result)
 }
+
+func TestFindLinkTargetURLEncoded(t *testing.T) {
+	// A link to a file whose name holds a space arrives percent-encoded, which
+	// is no name the filesystem knows.
+	base := t.TempDir()
+	name := "Branching Strategy & CI_CD Guide.md"
+	if err := os.WriteFile(filepath.Join(base, name), []byte("# x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	found, why := findLinkTarget([]string{base}, "Branching%20Strategy%20&%20CI_CD%20Guide.md")
+	assert.Nil(t, why)
+	assert.Equal(t, filepath.Join(base, name), found)
+}

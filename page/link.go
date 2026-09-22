@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -368,6 +369,14 @@ func resolveLink(
 // so adding places to look cannot change what an unambiguous link already meant.
 func findLinkTarget(bases []string, name string) (string, *unresolved) {
 	var directory bool
+
+	// A link target is a URL, so a space in the file's name reaches here as
+	// "%20" -- which is what Obsidian, cme and anything else writing Markdown
+	// links produce. The filesystem knows only the decoded form. A name that is
+	// not valid escaping is taken as written, since it is then a literal.
+	if decoded, err := url.PathUnescape(name); err == nil {
+		name = decoded
+	}
 
 	for _, base := range bases {
 		candidate := filepath.Join(base, name)
