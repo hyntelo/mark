@@ -9,6 +9,8 @@ import (
 	stdhtml "html"
 	"math"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -44,7 +46,7 @@ var renderTimeout = 120 * time.Second
 const diagramPad = 5
 
 // renderSVG compiles a diagram and draws it, which is where both outputs start:
-// the PNG is a screenshot of this, and the SVG is this.
+// the PNG is this rasterised, and the SVG is this.
 //
 // The size comes back with it, because d2 knows it: the drawing is the bounding
 // box of what it laid out plus the pad on every side. Reading it back out of
@@ -78,11 +80,12 @@ func renderSVG(ctx context.Context, d2Diagram []byte) (out []byte, width, height
 		return nil, 0, 0, err
 	}
 
-	// Before anything is done with the drawing, because both things done with
-	// it are dangerous. The PNG is taken by navigating a browser to this as a
-	// document, so anything the drawing runs runs here, on the machine
-	// publishing -- in a browser started with --no-sandbox. The SVG is uploaded
-	// whole, so the same thing is served to whoever opens the page.
+	// Before anything is done with the drawing. The PNG is rasterised by resvg,
+	// which draws and does not execute, so that side no longer runs what the
+	// diagram says -- but the SVG is uploaded whole, and served to whoever opens
+	// the page. Checked in one place for both, because which output a run
+	// produces is a flag, and a check that only guards one of them is a check
+	// somebody turns off by accident.
 	if err := checkDrawingIsSafe(out); err != nil {
 		return nil, 0, 0, err
 	}
@@ -100,15 +103,14 @@ func ProcessD2(title string, d2Diagram []byte, scale float64) (attachment.Attach
 	ctx = d2log.WithDefault(ctx)
 	defer cancel()
 
-	out, _, _, err := renderSVG(ctx, d2Diagram)
+	out, width, height, err := renderSVG(ctx, d2Diagram)
 	if err != nil {
 		return attachment.Attachment{}, err
 	}
 
 	log.Debug().Msgf("Rendering: %q", title)
-	// d2 nests the diagram in an outer svg, so the inner one is what to
-	// screenshot: the outer one carries the padding.
-	pngBytes, width, height, err := chrome.PNGFromSVG(out, `document.querySelector("svg > svg")`, scale)
+
+	pngBytes, err := rasterise(ctx, substituteEmbeddedFonts(out), scale)
 	if err != nil {
 		return attachment.Attachment{}, err
 	}
@@ -139,8 +141,8 @@ func ProcessD2(title string, d2Diagram []byte, scale float64) (attachment.Attach
 		FileBytes: pngBytes,
 		Checksum:  checkSum,
 		Replace:   title,
-		Width:     strconv.FormatInt(width, 10),
-		Height:    strconv.FormatInt(height, 10),
+		Width:     strconv.Itoa(width),
+		Height:    strconv.Itoa(height),
 	}, nil
 }
 
@@ -326,11 +328,11 @@ var executable = map[string]bool{
 // checkDrawingIsSafe refuses a rendered diagram that would do something rather
 // than depict something.
 //
-// Both things mark does with a drawing execute it: the PNG is a screenshot
-// taken by navigating a browser to the drawing as a document, and the SVG is
-// uploaded to Confluence for other people's browsers to open. A diagram in a
-// pull request could therefore read a cloud metadata endpoint from the CI
-// runner, or wait to be opened by a colleague.
+// The SVG is uploaded to Confluence for other people's browsers to open, so a
+// diagram in a pull request could wait there to be opened by a colleague. The
+// PNG is rasterised rather than screenshotted now, so it no longer runs
+// anything on the machine publishing -- the check stays over both because that
+// is a property of the rasteriser, not a promise the diagram made.
 //
 // What a diagram has to say for itself is mostly drawn rather than passed
 // through -- but not all of it: a d2 link is an address, and it goes into the
@@ -422,11 +424,121 @@ func (bundleLogger) Debug(message string) { log.Debug().Msg(message) }
 func (bundleLogger) Info(message string)  { log.Info().Msg(message) }
 func (bundleLogger) Error(message string) { log.Error().Msg(message) }
 
-// Cleanup shuts down the browser this package renders through.
+// Cleanup shuts down the shared browser.
 //
-// It is kept here as well as in chrome/ because the tests in this package and
-// in markdown/ call it by name, and because a caller that only knows it renders
-// diagrams should not have to know which package owns the browser.
+// This package no longer starts one -- it rasterises with resvg -- but mermaid
+// and the math feature still can, and mark.go calls this alongside theirs. It
+// stays a call into chrome/ rather than becoming a no-op so that a caller which
+// only knows it renders diagrams does not have to know which package owns the
+// browser.
 func Cleanup() {
 	chrome.Cleanup()
+}
+
+// resvgBinary rasterises the SVG that d2 has already drawn.
+//
+// d2 compiles, lays out and renders a diagram entirely in Go: by the time
+// renderSVG returns, the drawing is finished. Chrome was only ever the thing
+// that turned that drawing into a picture, which is a job a browser is a very
+// large way to do -- it is half the weight of the image, and it has to be run
+// with its sandbox disabled to work in a container at all.
+//
+// resvg does the same job in about 5 MB. mermaid still needs a real renderer,
+// which is merman's job (--mermaid-engine=merman); this only replaces the
+// screenshot.
+const resvgBinary = "resvg"
+
+// fontDirEnv names the directory resvg draws with, to the exclusion of the
+// system's own fonts. Unset, resvg keeps its normal behaviour, which is what a
+// developer running mark on a workstation wants.
+const fontDirEnv = "MARK_FONT_DIR"
+
+// rasterise turns the drawing into a PNG at the requested scale.
+func rasterise(ctx context.Context, svg []byte, scale float64) ([]byte, error) {
+	runCtx, cancel := context.WithTimeout(ctx, renderTimeout)
+	defer cancel()
+
+	// "-" reads the SVG from stdin, "-c" writes the PNG to stdout: nothing
+	// touches the filesystem, so there is no temporary file to name or clean up.
+	args := []string{"-", "-c", "--zoom", strconv.FormatFloat(scale, 'f', -1, 64)}
+
+	// Where a font directory is named, it is the only one used. Otherwise resvg
+	// draws with whatever fonts the machine happens to have -- which on a shared
+	// CI agent is a set that other pipelines can change, and a diagram drawn with
+	// a different font is a different diagram. The checksum is taken over the
+	// source and the scale, not over the pixels, so a diagram that changed this
+	// way is never re-uploaded: the page keeps the old picture and nothing says so.
+	if dir := os.Getenv(fontDirEnv); dir != "" {
+		args = append(args, "--skip-system-fonts", "--use-fonts-dir", dir)
+	}
+
+	cmd := exec.CommandContext(runCtx, resvgBinary, args...)
+	cmd.Stdin = bytes.NewReader(svg)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if runCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("d2 rasterising timed out after %v", renderTimeout)
+		}
+
+		return nil, fmt.Errorf("%s failed: %w: %s", resvgBinary, err, bytes.TrimSpace(stderr.Bytes()))
+	}
+
+	if stdout.Len() == 0 {
+		return nil, fmt.Errorf("%s produced no output: %s", resvgBinary, bytes.TrimSpace(stderr.Bytes()))
+	}
+
+	return stdout.Bytes(), nil
+}
+
+var (
+	d2FontFace      = regexp.MustCompile(`(?s)@font-face\s*\{.*?\}`)
+	d2FontReference = regexp.MustCompile(`font-family:\s*"?d2-\d+-font-([a-z-]+)"?`)
+)
+
+// substituteEmbeddedFonts points the drawing at fonts resvg can actually find.
+//
+// d2 subsets Source Sans Pro and Source Code Pro to the characters the diagram
+// uses and embeds them in the SVG as base64 @font-face rules, under a family
+// name generated per diagram ("d2-427536776-font-regular"). A browser reads
+// that. resvg does not -- it reports
+//
+//	The @font-face rule is not supported. Skipped.
+//	No match for 'd2-427536776-font-bold' font-family.
+//
+// and then draws the diagram with no text in it at all, exits 0 and writes a
+// perfectly valid PNG. The only way to catch it is to look at the picture.
+//
+// So the rules are dropped and every reference is rewritten to the real family
+// name. The image installs d2's own .ttf files, taken out of the Go module at
+// build time, so the glyphs resvg draws are the ones d2 measured the text with
+// and the layout it computed still fits.
+func substituteEmbeddedFonts(svg []byte) []byte {
+	svg = d2FontFace.ReplaceAll(svg, nil)
+
+	return d2FontReference.ReplaceAllFunc(svg, func(match []byte) []byte {
+		style := string(d2FontReference.FindSubmatch(match)[1])
+
+		family := `"Source Sans Pro"`
+		if strings.HasPrefix(style, "mono") {
+			family = `"Source Code Pro"`
+			style = strings.TrimPrefix(strings.TrimPrefix(style, "mono"), "-")
+		}
+
+		// The weight and the slant are part of the generated family name, and
+		// have to become real CSS properties: one family holds all four faces.
+		switch style {
+		case "bold":
+			return []byte(`font-family:` + family + `;font-weight:700;`)
+		case "semibold":
+			return []byte(`font-family:` + family + `;font-weight:600;`)
+		case "italic":
+			return []byte(`font-family:` + family + `;font-style:italic;`)
+		default:
+			return []byte(`font-family:` + family + `;`)
+		}
+	})
 }
