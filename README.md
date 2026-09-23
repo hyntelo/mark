@@ -40,7 +40,7 @@ mark --dry-run --log-level DEBUG -f docs/auth.md   # render and resolve, touch n
 ## 2. What the fork changes
 
 | Area | Upstream | Fork |
-|---|---|---|
+| --- | --- | --- |
 | Mixed ancestry | anchor pages first, then every folder below them | `Parent` / `Folder` headers resolved **in the order they appear** (`page > folder > page > folder > target`) |
 | Leading `Folder` | parented to the space root | parented to the **space homepage**, as Confluence Cloud does |
 | Lookup of each level | CQL search | parent-scoped search → space-wide search validated on v2 `parentId` → re-resolve on title conflict (CQL index lags) |
@@ -59,7 +59,7 @@ Diagrams are drawn by an external program found on the `PATH`. The release archi
 contains only `mark`.
 
 | Feature | Chrome (default) | Native (no browser) |
-|---|---|---|
+| --- | --- | --- |
 | `mermaid` | `--mermaid-engine=chrome` | `--mermaid-engine=merman` → needs `merman-cli` |
 | `d2` (PNG) | `--d2-engine=chrome` | `--d2-engine=resvg` → needs `resvg` |
 | `math` | Chrome | not available |
@@ -82,7 +82,7 @@ contains only `mark`.
 Download from [Releases](https://github.com/hyntelo/mark/releases):
 
 | OS | Archive |
-|---|---|
+| --- | --- |
 | Linux x86_64 | `mark_Linux_x86_64.tar.gz` |
 | Linux arm64 | `mark_Linux_arm64.tar.gz` |
 | macOS Intel | `mark_Darwin_x86_64.tar.gz` |
@@ -114,7 +114,7 @@ mark --version
 Install Chrome or Chromium in its standard location; mark finds it on its own.
 
 | OS | Command |
-|---|---|
+| --- | --- |
 | Debian / Ubuntu | `sudo apt install chromium` (or Google Chrome `.deb`) |
 | Arch | `sudo pacman -S chromium` |
 | macOS | `brew install --cask google-chrome` |
@@ -171,7 +171,7 @@ merman-cli --version
 **Step 2 — resvg** (d2)
 
 | OS | Command |
-|---|---|
+| --- | --- |
 | Linux | `cargo install --locked resvg` (no prebuilt Linux binary) |
 | macOS | `brew install resvg` |
 | Windows | `resvg-win64.zip` from [resvg releases](https://github.com/linebender/resvg/releases), add to `PATH` |
@@ -220,7 +220,7 @@ if ($ok) {
 Three equivalent ways, pick one (a flag beats the env var, the env var beats the file):
 
 | Way | mermaid | d2 |
-|---|---|---|
+| --- | --- | --- |
 | Flag, per run | `--mermaid-engine=merman` | `--d2-engine=resvg` |
 | Env var | `MARK_MERMAID_ENGINE=merman` | `MARK_D2_ENGINE=resvg` |
 | `mark.toml`<br>Linux: `~/.config/mark.toml`<br>macOS: `~/Library/Application Support/mark.toml`<br>Windows: `%AppData%\mark.toml` | `mermaid-engine = "merman"` | `d2-engine = "resvg"` |
@@ -232,7 +232,7 @@ mark --mermaid-engine=merman --d2-engine=resvg -f page.md
 The font directory is set the same three ways:
 
 | Way | Font directory |
-|---|---|
+| --- | --- |
 | Flag, per run | `--d2-font-dir ~/.local/share/fonts/d2` |
 | Env var | `MARK_FONT_DIR=~/.local/share/fonts/d2` |
 | `mark.toml`<br>Linux: `~/.config/mark.toml`<br>macOS: `~/Library/Application Support/mark.toml`<br>Windows: `%AppData%\mark.toml` | `d2-font-dir = "/home/<you>/.local/share/fonts/d2"` |
@@ -250,7 +250,7 @@ d2-font-dir    = "/home/<you>/.local/share/fonts/d2"   # Windows: 'C:\Users\<you
 Not published; build locally.
 
 | Image | Dockerfile | Contents |
-|---|---|---|
+| --- | --- | --- |
 | Chrome | `Dockerfile` | mark + headless Chrome |
 | Native | `Dockerfile.nobrowser` | mark + merman-cli + resvg + d2 fonts, amd64 only, no maths |
 
@@ -276,7 +276,7 @@ The token acts as your password: mark logs in with your email + the token.
 ### 5.2 Create `mark.toml`
 
 | OS | Path |
-|---|---|
+| --- | --- |
 | Linux | `~/.config/mark.toml` |
 | macOS | `~/Library/Application Support/mark.toml` |
 | Windows | `%AppData%\mark.toml` |
@@ -356,7 +356,7 @@ d2-font-dir    = "<absolute-path-to-d2-fonts>"
 **Step 2 — replace the placeholders.**
 
 | Key | Placeholder | Put | Watch out |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `username` | `<your-email>` | your Atlassian account email | |
 | `password` | `<api-token>` | the token from §5.1 | **secret**: this file only, never in a repo, a script or a chat. Or delete the line and use §5.3 |
 | `base-url` | `<your-org>` | your Confluence Cloud site (`https://<org>.atlassian.net/wiki`) | internal: do not write the real one in this public repo |
@@ -369,7 +369,7 @@ or a page published from your machine comes out different from the same page
 published by the pipeline:
 
 | Key | Effect |
-|---|---|
+| --- | --- |
 | `title-from-h1` | page title = the document's `# H1` (vault files have no `Title` header) |
 | `drop-h1` | removes that H1 from the body, so the title is not shown twice |
 | `features` | enabled syntaxes; **replaces** the default (`mermaid`, `mention`) |

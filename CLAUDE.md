@@ -48,6 +48,21 @@ go test ./metadata/ -run TestExtractMetaAncestryPreservesFileOrder -v
 go vet ./...
 ```
 
+**Reproducing `ci-go-lint` / `ci-markdown-lint` locally**: both CI jobs pin an
+exact tool version (`.github/workflows/ci.yml`), so run the same one instead
+of whatever `latest` resolves to - a newer linter adds rules the CI version
+doesn't have yet, and a stale local install misses ones it does:
+
+```bash
+# ci-go-lint: golangci-lint-action's `version:` input
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run ./...
+
+# ci-markdown-lint: the exact markdownlint-cli2 dependency of
+# markdownlint-cli2-action's pinned tag (check its package-lock.json if the
+# tag in ci.yml ever changes)
+npx --yes markdownlint-cli2@0.23.2
+```
+
 **Unset `MARK_PASSWORD` before running `./util/`.** A shell that exports a real Atlassian token breaks the credential-resolution tests, which assert that a config-file or flag password wins; the env var beats both, so two of them fail and one prints the live token into the output. `env -u MARK_PASSWORD go test ./...`.
 
 Upstream ships an in-memory Confluence fake at `confluence/confluencetest`, which is how resolver behaviour is tested without the network: `confluencetest.New(t)`, then `AddSpace`/`AddPage`/`AddFolder`/`SetHomepage` to arrange a hierarchy, `CountRequests` to assert nothing was created, and `SetFail` to inject a status. `page/ancestry_ordered_test.go` and `page/confluence_id_test.go` use it for the fork's own resolvers.
@@ -130,7 +145,7 @@ Upstream identifies a page by `(space, title)` and follows a rename through `man
 Carried in `master`, not yet upstreamed:
 
 | Commit | Area | What |
-|---|---|---|
+| --- | --- | --- |
 | `78ec96e` | mark.go | When a `-f` glob matches nothing, fall back to the literal path |
 | `e0dc0c8` | page/link.go | Decode a percent-encoded link target before looking for the file |
 | `9421123` | util/flags | `--layout` flag, and naming a config key nothing reads |
