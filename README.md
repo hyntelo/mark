@@ -126,10 +126,47 @@ Nothing to configure: `chrome` is the default for both engines.
 
 **Step 1 — merman-cli** (mermaid)
 
-| OS | How |
-|---|---|
-| Linux x86_64 | prebuilt from [merman releases](https://github.com/Latias94/merman/releases) (below) |
-| other OS / arch | a build from the releases page if there is one, otherwise `cargo install merman-cli` |
+mark refuses a merman older than the version in [`mermaid/merman-version.txt`](./mermaid/merman-version.txt).
+The commands below read that version from the file, so they always install the right one.
+
+Linux x86_64, macOS (Intel and Apple Silicon):
+
+```bash
+V=$(curl -fsSL https://raw.githubusercontent.com/hyntelo/mark/master/mermaid/merman-version.txt)
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64)  T=x86_64-unknown-linux-gnu ;;
+  Darwin-x86_64) T=x86_64-apple-darwin ;;
+  Darwin-arm64)  T=aarch64-apple-darwin ;;
+  *) echo "no prebuilt merman-cli for $(uname -s)-$(uname -m): see 'Other platforms' below" ;;
+esac
+cd "$(mktemp -d)"
+curl -fsSLO "https://github.com/Latias94/merman/releases/download/v$V/merman-cli-$T.tar.xz"
+tar -xJf "merman-cli-$T.tar.xz"
+sudo install -m 0755 "merman-cli-$T/merman-cli" /usr/local/bin/merman-cli
+merman-cli --version
+```
+
+Windows x86_64 (PowerShell):
+
+```powershell
+$V = (Invoke-RestMethod https://raw.githubusercontent.com/hyntelo/mark/master/mermaid/merman-version.txt).Trim()
+$D = "$env:LOCALAPPDATA\mark"; New-Item -ItemType Directory -Force $D | Out-Null
+$Z = "$env:TEMP\merman-cli.zip"
+Invoke-WebRequest "https://github.com/Latias94/merman/releases/download/v$V/merman-cli-x86_64-pc-windows-msvc.zip" -OutFile $Z
+Expand-Archive -Force $Z "$env:TEMP\merman-cli"
+Copy-Item -Force (Get-ChildItem -Recurse "$env:TEMP\merman-cli" -Filter merman-cli.exe).FullName $D
+merman-cli --version   # $D is on PATH from §4.1
+```
+
+Other platforms (Linux arm64, Windows arm64): build it with [Rust](https://rustup.rs).
+`--version` is required: without it cargo installs the latest *stable* release,
+which is older than mark accepts.
+
+```bash
+V=$(curl -fsSL https://raw.githubusercontent.com/hyntelo/mark/master/mermaid/merman-version.txt)
+cargo install --locked --force merman-cli --version "$V"
+merman-cli --version
+```
 
 **Step 2 — resvg** (d2)
 
@@ -245,19 +282,103 @@ The token acts as your password: mark logs in with your email + the token.
 | Windows | `%AppData%\mark.toml` |
 | any, elsewhere | `--config <path>` or `MARK_CONFIG=<path>` |
 
-```toml
-username = "you@example.com"                  # Atlassian account email
-password = "<API token>"
-base-url = "https://<org>.atlassian.net/wiki"
-```
+**Step 1 — generate it with placeholders.** An existing file is never overwritten.
 
-Linux / macOS, make it readable only by you:
+Linux / macOS:
 
 ```bash
-chmod 600 ~/.config/mark.toml   # macOS: ~/Library/Application\ Support/mark.toml
+case "$(uname)" in Darwin) C="$HOME/Library/Application Support/mark.toml" ;; *) C="$HOME/.config/mark.toml" ;; esac
+if [ -e "$C" ]; then echo "$C already exists, not touched"; else
+mkdir -p "$(dirname "$C")"
+cat > "$C" <<'EOF'
+username = "<your-email>"
+password = "<api-token>"
+base-url = "https://<your-org>.atlassian.net/wiki"
+
+# Page title and body
+title-from-h1 = true
+drop-h1       = true
+features      = ["d2", "mermaid", "mention", "mkdocsadmonitions"]
+layout        = "article"
+
+# Publishing
+edit-lock    = true
+changes-only = true
+
+# Diagrams
+mermaid-scale  = 3
+d2-scale       = 10
+mermaid-config = "<absolute-path-to>/mermaid-config.json"
+
+# Native renderers (§4.3). Delete these three lines to use Chrome.
+mermaid-engine = "merman"
+d2-engine      = "resvg"
+d2-font-dir    = "<absolute-path-to-d2-fonts>"
+EOF
+chmod 600 "$C"; echo "created $C"
+fi
 ```
 
-The same file also takes the engines (§4.3, step 4) and every other flag, under the flag's name.
+Windows (PowerShell):
+
+```powershell
+$C = "$env:APPDATA\mark.toml"
+if (Test-Path $C) { "$C already exists, not touched" } else {
+@'
+username = "<your-email>"
+password = "<api-token>"
+base-url = "https://<your-org>.atlassian.net/wiki"
+
+# Page title and body
+title-from-h1 = true
+drop-h1       = true
+features      = ["d2", "mermaid", "mention", "mkdocsadmonitions"]
+layout        = "article"
+
+# Publishing
+edit-lock    = true
+changes-only = true
+
+# Diagrams
+mermaid-scale  = 3
+d2-scale       = 10
+mermaid-config = "<absolute-path-to>/mermaid-config.json"
+
+# Native renderers (§4.3). Delete these three lines to use Chrome.
+mermaid-engine = "merman"
+d2-engine      = "resvg"
+d2-font-dir    = "<absolute-path-to-d2-fonts>"
+'@ | Set-Content -Encoding utf8 $C
+"created $C"
+}
+```
+
+**Step 2 — replace the placeholders.**
+
+| Key | Placeholder | Put | Watch out |
+|---|---|---|---|
+| `username` | `<your-email>` | your Atlassian account email | |
+| `password` | `<api-token>` | the token from §5.1 | **secret**: this file only, never in a repo, a script or a chat. Or delete the line and use §5.3 |
+| `base-url` | `<your-org>` | your Confluence Cloud site (`https://<org>.atlassian.net/wiki`) | internal: do not write the real one in this public repo |
+| `mermaid-config` | `<absolute-path-to>` | absolute path of the vault's `mermaid-config.json` | absolute (TOML does not expand `~`); names your vault, so keep it out of this repo. Delete the line if you have none |
+| `d2-font-dir` | `<absolute-path-to-d2-fonts>` | the folder of §4.3 step 3, e.g. `/home/<you>/.local/share/fonts/d2` | absolute; only with `d2-engine = "resvg"` |
+| `mermaid-engine`, `d2-engine`, `d2-font-dir` | — | keep for the native renderers, delete for Chrome | |
+
+The other keys are the vault's publishing settings; keep them identical to the CI's,
+or a page published from your machine comes out different from the same page
+published by the pipeline:
+
+| Key | Effect |
+|---|---|
+| `title-from-h1` | page title = the document's `# H1` (vault files have no `Title` header) |
+| `drop-h1` | removes that H1 from the body, so the title is not shown twice |
+| `features` | enabled syntaxes; **replaces** the default (`mermaid`, `mention`) |
+| `layout` | `article`: narrow, centred reading width |
+| `edit-lock` | marks the page as generated, discourages editing it in Confluence |
+| `changes-only` | skips the update when the body did not change (no empty versions) |
+| `mermaid-scale`, `d2-scale` | PNG sharpness |
+
+Every other flag can go in this file too, under the flag's name.
 
 ### 5.3 Token via env var instead (optional)
 
