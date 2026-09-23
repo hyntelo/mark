@@ -354,6 +354,12 @@ var Flags = []cli.Flag{
 			altsrctoml.TOML("d2-engine", altsrc.NewStringPtrSourcer(&filename))),
 	},
 	&cli.StringFlag{
+		Name:  "d2-font-dir",
+		Usage: "the only font directory resvg draws d2 diagrams with, ignoring the system's fonts. Only --d2-engine=resvg reads it. Unset, resvg uses the system's fonts.",
+		Sources: cli.NewValueSourceChain(cli.EnvVar("MARK_FONT_DIR"),
+			altsrctoml.TOML("d2-font-dir", altsrc.NewStringPtrSourcer(&filename))),
+	},
+	&cli.StringFlag{
 		Name:    "d2-output",
 		Value:   "png",
 		Usage:   "image a d2 diagram is published as: png (rasterised) or svg (vector and sharp at any zoom, with whatever the diagram references inlined into it, where the instance displays an SVG attachment).",

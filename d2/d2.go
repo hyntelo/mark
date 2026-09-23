@@ -9,7 +9,6 @@ import (
 	stdhtml "html"
 	"math"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -504,10 +503,16 @@ func Cleanup() {
 // --d2-engine=resvg. It has to be installed: mark shells out to it by name.
 const resvgBinary = "resvg"
 
-// fontDirEnv names the directory resvg draws with, to the exclusion of the
-// system's own fonts. Unset, resvg keeps its normal behaviour, which is what a
-// developer running mark on a workstation wants.
-const fontDirEnv = "MARK_FONT_DIR"
+// fontDir names the directory resvg draws with, to the exclusion of the
+// system's own fonts (--d2-font-dir, MARK_FONT_DIR). Empty, resvg keeps its
+// normal behaviour, which is what a developer running mark on a workstation wants.
+var fontDir string
+
+// UseFontDir sets the directory resvg draws with, for the rest of the run. Set
+// once, before anything is published.
+func UseFontDir(dir string) {
+	fontDir = dir
+}
 
 // rasterise turns the drawing into a PNG at the requested scale.
 func rasterise(ctx context.Context, svg []byte, scale float64) ([]byte, error) {
@@ -524,8 +529,8 @@ func rasterise(ctx context.Context, svg []byte, scale float64) ([]byte, error) {
 	// a different font is a different diagram. The checksum is taken over the
 	// source and the scale, not over the pixels, so a diagram that changed this
 	// way is never re-uploaded: the page keeps the old picture and nothing says so.
-	if dir := os.Getenv(fontDirEnv); dir != "" {
-		args = append(args, "--skip-system-fonts", "--use-fonts-dir", dir)
+	if fontDir != "" {
+		args = append(args, "--skip-system-fonts", "--use-fonts-dir", fontDir)
 	}
 
 	cmd := exec.CommandContext(runCtx, resvgBinary, args...)

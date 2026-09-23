@@ -325,3 +325,21 @@ func TestCheckConfigFileAcceptsEveryFlagName(t *testing.T) {
 
 	assert.NoError(t, CheckConfigFile(cmd))
 }
+
+// TestD2FontDirSources: the directory resvg draws with is read from the flag,
+// from MARK_FONT_DIR -- the name the browserless image already sets -- and from
+// the configuration file, in that order of precedence.
+func TestD2FontDirSources(t *testing.T) {
+	path := writeConfig(t, t.TempDir(), "mark.toml", "d2-font-dir = \"/from/config\"\n")
+	names := []string{"d2-font-dir"}
+
+	resolved := resolveFlags(t, map[string]string{"MARK_CONFIG": path}, names)
+	assert.Equal(t, "/from/config", resolved["d2-font-dir"])
+
+	resolved = resolveFlags(t, map[string]string{"MARK_CONFIG": path, "MARK_FONT_DIR": "/from/env"}, names)
+	assert.Equal(t, "/from/env", resolved["d2-font-dir"])
+
+	resolved = resolveFlags(t, map[string]string{"MARK_CONFIG": path, "MARK_FONT_DIR": "/from/env"}, names,
+		"--d2-font-dir", "/from/flag")
+	assert.Equal(t, "/from/flag", resolved["d2-font-dir"])
+}

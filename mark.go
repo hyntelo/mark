@@ -92,6 +92,7 @@ type Config struct {
 	MermaidConfig    string
 	MermaidBundle    bool
 	D2Engine         string
+	D2FontDir        string
 	D2Output         string
 	D2Scale          float64
 	D2BundleRemote   bool
@@ -186,6 +187,7 @@ func run(ctx context.Context, config Config) error {
 	if err := d2.UseEngine(config.D2Engine); err != nil {
 		return err
 	}
+	d2.UseFontDir(config.D2FontDir)
 
 	outputFormat, err := report.ParseFormat(config.OutputFormat)
 	if err != nil {
