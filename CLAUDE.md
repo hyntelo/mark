@@ -69,7 +69,7 @@ Two traps in those tests:
 
 ## Architecture
 
-```
+```text
 cmd/mark/        binary entry; flag parsing -> mark.go::run
 mark.go          glue: ExtractMeta -> ResolvePage -> render -> CreatePage/UpdatePage
 metadata/        markdown header parsing (Space, Parent, Folder, Title, ...)
@@ -168,6 +168,7 @@ The fork is driven by a thin wrapper that walks a documentation vault and calls 
 That wrapper passes only `-f`, `--space`, `--dry-run` and `--edit-lock`, and scrapes stdout for `/pages/<id>` to stamp `confluence_id` back into the file's front matter. Changing what `mark` prints on success breaks that stamping. The stamped ID is no longer write-only: `mark` reads it back to rename pages in place (see Page identity above).
 
 Common workflow when changing mark's behavior:
+
 1. Build + install patched binary (`go build -o bin/mark ./cmd/mark && sudo install -m 0755 bin/mark /usr/local/bin/mark`).
 2. Validate via dry-run: `mark --log-level DEBUG --dry-run --space DOCS -f "<some vault file>"`.
 3. Push end-to-end through the wrapper against a scratch space.

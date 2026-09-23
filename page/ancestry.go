@@ -767,7 +767,7 @@ func findOrCreatePageEntry(
 		log.Warn().Err(cerr).Msgf("create %q failed with title conflict; retrying via space-wide resolver", title)
 		retry, rerr := resolvePageBySpaceWideAndValidate(api, space, title, parent.ID)
 		if rerr != nil {
-			return nil, fmt.Errorf("create page %q under %s %q failed and recovery failed: create=%v recovery=%w", title, parent.Type, parent.Title, cerr, rerr)
+			return nil, fmt.Errorf("create page %q under %s %q failed and recovery failed: create=%w recovery=%w", title, parent.Type, parent.Title, cerr, rerr)
 		}
 		if retry != nil {
 			return retry, nil
@@ -855,7 +855,7 @@ func resolvePageBySpaceWideAndValidate(
 
 	return nil, fmt.Errorf(
 		"page %q exists in space %q under a different parent (parentId=%q; expected %q). "+
-			"Either rename the new page or move the existing page under the expected parent in Confluence.",
+			"Either rename the new page or move the existing page under the expected parent in Confluence",
 		title, space, parentID, expectedParentID,
 	)
 }
@@ -962,7 +962,7 @@ func findOrCreateFolderEntry(
 		log.Warn().Err(cerr).Msgf("create folder %q failed with title conflict; re-resolving", title)
 		retry, rerr := resolveFolderEntry(api, dryRun, space, underID, title, anchorPageID)
 		if rerr != nil {
-			return nil, fmt.Errorf("create folder %q under %q failed and recovery failed: create=%v recovery=%w", title, underID, cerr, rerr)
+			return nil, fmt.Errorf("create folder %q under %q failed and recovery failed: create=%w recovery=%w", title, underID, cerr, rerr)
 		}
 		if retry != nil {
 			return retry, nil
@@ -970,7 +970,7 @@ func findOrCreateFolderEntry(
 
 		return nil, fmt.Errorf(
 			"folder %q exists in space %q but not under the expected parent %q. "+
-				"Either rename the new folder or move the existing folder under the expected parent in Confluence.",
+				"Either rename the new folder or move the existing folder under the expected parent in Confluence",
 			title, space, underID,
 		)
 	}

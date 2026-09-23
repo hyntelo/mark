@@ -90,7 +90,7 @@ Download from [Releases](https://github.com/hyntelo/mark/releases):
 | Windows x86_64 | `mark_Windows_x86_64.zip` |
 | Windows arm64 | `mark_Windows_arm64.zip` |
 
-**Linux / macOS**
+#### Linux / macOS
 
 ```bash
 tar -xzf mark_<Os>_<Arch>.tar.gz mark
@@ -215,7 +215,7 @@ if ($ok) {
 }
 ```
 
-**Step 4 — select the engines**
+#### Step 4 — select the engines
 
 Three equivalent ways, pick one (a flag beats the env var, the env var beats the file):
 
